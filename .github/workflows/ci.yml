@@ -23,6 +23,16 @@ jobs:
         run: npm ci
       - name: Run tests
         run: npm test
-      - name: Coverage (optional)
+
+      - name: Coverage
         if: ${{ matrix.node == 20 }}
         run: npm run coverage
+
+      - name: Upload coverage to Codecov
+        if: ${{ matrix.node == 20 }}
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage/lcov.info
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

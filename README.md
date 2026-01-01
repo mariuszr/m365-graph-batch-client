@@ -3,6 +3,7 @@
 Resilient Microsoft Graph `$batch` executor for Node.js.
 
 ![CI](https://github.com/mariuszr/m365-graph-batch-client/actions/workflows/ci.yml/badge.svg)
+[![codecov](https://codecov.io/gh/mariuszr/m365-graph-batch-client/branch/main/graph/badge.svg)](https://codecov.io/gh/mariuszr/m365-graph-batch-client)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Node](https://img.shields.io/badge/node-%3E%3D18-blue)
 
@@ -164,6 +165,12 @@ and you can decide what to do with the failures.
 
 In `mode: 'partial'`, offline/network-like failures during token acquisition or the `$batch` call
 are represented as synthetic `599` subresponses so you still get a complete `responses` map.
+
+## Codecov setup
+
+1. Connect the repo in Codecov.
+2. Add `CODECOV_TOKEN` as a GitHub Actions secret.
+3. Push to `main` (or open a PR) to upload coverage.
 
 ## Development
 
