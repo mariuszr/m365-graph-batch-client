@@ -1,140 +1,140 @@
-const { M365GraphBatchClient, getRetryAfterMs, normalizeHeaders, toRelativeBatchUrl } = require('..');
-const { createPaginationHandler } = require('../internal/pagination');
-const { createRefreshTokenAccessTokenProvider } = require('../internal/tokenProvider');
+const { M365GraphBatchClient, getRetryAfterMs, normalizeHeaders, toRelativeBatchUrl } = require('..')
+const { createPaginationHandler } = require('../internal/pagination')
+const { createRefreshTokenAccessTokenProvider } = require('../internal/tokenProvider')
 
 function createAxiosResponse({ status = 200, data, headers = {} }) {
-  const normalizedHeaders = {};
-  for (const [k, v] of Object.entries(headers || {})) normalizedHeaders[String(k).toLowerCase()] = String(v);
+  const normalizedHeaders = {}
+  for (const [k, v] of Object.entries(headers || {})) normalizedHeaders[String(k).toLowerCase()] = String(v)
 
   return {
     status,
     data,
     headers: normalizedHeaders,
-  };
+  }
 }
 
 function createMockSleep() {
-  const calls = [];
+  const calls = []
   const sleep = async (ms) => {
-    calls.push(ms);
-  };
-  return { sleep, calls };
+    calls.push(ms)
+  }
+  return { sleep, calls }
 }
 
 function createMockAxios(sequence) {
-  const calls = [];
-  let idx = 0;
+  const calls = []
+  let idx = 0
 
   const axios = {
     async request(config) {
-      calls.push(config);
+      calls.push(config)
 
       if (idx >= sequence.length) {
-        throw new Error(`Mock axios out of responses (call ${calls.length})`);
+        throw new Error(`Mock axios out of responses (call ${calls.length})`)
       }
 
-      const step = sequence[idx++];
+      const step = sequence[idx++]
       if (step.matcher) {
-        expect(step.matcher(config)).toBe(true);
+        expect(step.matcher(config)).toBe(true)
       }
 
-      if (step.throw) throw step.throw;
-      return step.response;
+      if (step.throw) throw step.throw
+      return step.response
     },
-  };
+  }
 
-  return { axios, calls, remaining: () => sequence.length - idx };
+  return { axios, calls, remaining: () => sequence.length - idx }
 }
 
 describe('m365GraphBatchClient', () => {
   test('toRelativeBatchUrl strips origin and ensures leading slash', () => {
-    expect(toRelativeBatchUrl('https://graph.microsoft.com/v1.0/users?$top=1')).toBe('/v1.0/users?$top=1');
-    expect(toRelativeBatchUrl('/users')).toBe('/users');
-    expect(toRelativeBatchUrl('users')).toBe('/users');
-  });
+    expect(toRelativeBatchUrl('https://graph.microsoft.com/v1.0/users?$top=1')).toBe('/v1.0/users?$top=1')
+    expect(toRelativeBatchUrl('/users')).toBe('/users')
+    expect(toRelativeBatchUrl('users')).toBe('/users')
+  })
 
   test('getRetryAfterMs supports delta-seconds and HTTP-date', () => {
-    expect(getRetryAfterMs({ 'Retry-After': '2' }, () => 0)).toBe(2000);
+    expect(getRetryAfterMs({ 'Retry-After': '2' }, () => 0)).toBe(2000)
 
-    const date = 'Thu, 01 Jan 1970 00:00:01 GMT';
-    expect(getRetryAfterMs({ 'Retry-After': date }, () => 0)).toBe(1000);
-  });
+    const date = 'Thu, 01 Jan 1970 00:00:01 GMT'
+    expect(getRetryAfterMs({ 'Retry-After': date }, () => 0)).toBe(1000)
+  })
 
   test('getRetryAfterMs returns null for missing or invalid Retry-After', () => {
-    expect(getRetryAfterMs({})).toBeNull();
-    expect(getRetryAfterMs({ 'Retry-After': 'not-a-date-or-number' })).toBeNull();
-  });
+    expect(getRetryAfterMs({})).toBeNull()
+    expect(getRetryAfterMs({ 'Retry-After': 'not-a-date-or-number' })).toBeNull()
+  })
 
   test('getRetryAfterMs uses default now() and clamps to 0', () => {
-    expect(getRetryAfterMs({ 'Retry-After': 'Thu, 01 Jan 1970 00:00:00 GMT' })).toBe(0);
-  });
+    expect(getRetryAfterMs({ 'Retry-After': 'Thu, 01 Jan 1970 00:00:00 GMT' })).toBe(0)
+  })
 
   test('normalizeHeaders filters null/undefined values', () => {
-    expect(normalizeHeaders({ A: null, B: undefined, C: 'x' })).toEqual({ c: 'x' });
-  });
+    expect(normalizeHeaders({ A: null, B: undefined, C: 'x' })).toEqual({ c: 'x' })
+  })
 
   test('normalizeHeaders returns empty object for falsy input', () => {
-    expect(normalizeHeaders(null)).toEqual({});
-  });
+    expect(normalizeHeaders(null)).toEqual({})
+  })
 
   test('toRelativeBatchUrl throws for empty input', () => {
-    expect(() => toRelativeBatchUrl('')).toThrow(/Request url is required/);
-  });
+    expect(() => toRelativeBatchUrl('')).toThrow(/Request url is required/)
+  })
 
   test('constructor throws when options is missing', () => {
-    expect(() => new M365GraphBatchClient()).toThrow(/options is required/);
-  });
+    expect(() => new M365GraphBatchClient()).toThrow(/options is required/)
+  })
 
   test('default sleep uses timers and resolves', async () => {
-    jest.useFakeTimers();
+    jest.useFakeTimers()
 
     try {
-      const { axios } = createMockAxios([]);
-      const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' });
+      const { axios } = createMockAxios([])
+      const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
 
-      const p = client._sleep(10);
-      jest.advanceTimersByTime(10);
-      await p;
+      const p = client._sleep(10)
+      jest.advanceTimersByTime(10)
+      await p
     } finally {
-      jest.useRealTimers();
+      jest.useRealTimers()
     }
-  });
+  })
 
   test('default now() uses Date.now()', () => {
-    const { axios } = createMockAxios([]);
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' });
+    const { axios } = createMockAxios([])
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
 
-    const originalNow = Date.now;
-    Date.now = () => 123;
+    const originalNow = Date.now
+    Date.now = () => 123
 
     try {
-      expect(client._now()).toBe(123);
+      expect(client._now()).toBe(123)
     } finally {
-      Date.now = originalNow;
+      Date.now = originalNow
     }
-  });
+  })
 
   test('_toFullUrl adds leading slash for relative paths', () => {
-    const { axios } = createMockAxios([]);
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' });
+    const { axios } = createMockAxios([])
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
 
-    expect(client._toFullUrl('users')).toBe('https://graph.microsoft.com/v1.0/users');
-  });
+    expect(client._toFullUrl('users')).toBe('https://graph.microsoft.com/v1.0/users')
+  })
 
   test('constructor throws when getAccessToken/auth is missing', () => {
     expect(() => new M365GraphBatchClient({ axios: { request: async () => createAxiosResponse({}) } })).toThrow(
       /options\.getAccessToken is required/
-    );
-  });
+    )
+  })
 
   test('constructor throws when axiosInstance has no request', () => {
     expect(() => new M365GraphBatchClient({ axios: {}, getAccessToken: async () => 't' })).toThrow(
       /options\.axios\.request is required/
-    );
-  });
+    )
+  })
 
   test('constructor can use refresh_token auth when getAccessToken is not provided', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios, calls } = createMockAxios([
       {
@@ -145,7 +145,7 @@ describe('m365GraphBatchClient', () => {
         matcher: (config) => config.url === 'https://graph.microsoft.com/v1.0/$batch' && config.method === 'POST',
         response: createAxiosResponse({ data: { responses: [{ id: '1', status: 200, headers: {}, body: {} }] } }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -159,21 +159,21 @@ describe('m365GraphBatchClient', () => {
       initialBackoffMs: 0,
       jitterRatio: 0,
       maxBatchRetries: 0,
-    });
+    })
 
-    await client.batch([{ id: '1', url: '/x' }]);
+    await client.batch([{ id: '1', url: '/x' }])
 
-    expect(calls).toHaveLength(2);
-    expect(calls[1].headers.authorization).toBe('Bearer rt-access');
-  });
+    expect(calls).toHaveLength(2)
+    expect(calls[1].headers.authorization).toBe('Bearer rt-access')
+  })
 
   test('constructor can lazy-require axios when not injected', () => {
-    const client = new M365GraphBatchClient({ getAccessToken: async () => 't' });
-    expect(client).toBeInstanceOf(M365GraphBatchClient);
-  });
+    const client = new M365GraphBatchClient({ getAccessToken: async () => 't' })
+    expect(client).toBeInstanceOf(M365GraphBatchClient)
+  })
 
   test('refresh_token provider caches token until expiry', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios, calls } = createMockAxios([
       {
@@ -188,10 +188,10 @@ describe('m365GraphBatchClient', () => {
         matcher: (config) => config.url === 'https://graph.microsoft.com/v1.0/$batch',
         response: createAxiosResponse({ data: { responses: [{ id: '2', status: 200, headers: {}, body: {} }] } }),
       },
-    ]);
+    ])
 
     // Provide deterministic now() so token is not considered expired.
-    let now = 0;
+    const now = 0
     const client = new M365GraphBatchClient({
       axios,
       auth: {
@@ -205,17 +205,17 @@ describe('m365GraphBatchClient', () => {
       initialBackoffMs: 0,
       jitterRatio: 0,
       maxBatchRetries: 0,
-    });
+    })
 
-    await client.batch([{ id: '1', url: '/x' }]);
-    await client.batch([{ id: '2', url: '/x' }]);
+    await client.batch([{ id: '1', url: '/x' }])
+    await client.batch([{ id: '2', url: '/x' }])
 
     // One token refresh + two batch calls.
-    expect(calls).toHaveLength(3);
-  });
+    expect(calls).toHaveLength(3)
+  })
 
   test('refresh_token provider refreshes again after expiry', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios, calls } = createMockAxios([
       {
@@ -234,9 +234,9 @@ describe('m365GraphBatchClient', () => {
         matcher: (config) => config.url === 'https://graph.microsoft.com/v1.0/$batch',
         response: createAxiosResponse({ data: { responses: [{ id: '2', status: 200, headers: {}, body: {} }] } }),
       },
-    ]);
+    ])
 
-    let now = 0;
+    let now = 0
     const client = new M365GraphBatchClient({
       axios,
       auth: {
@@ -251,25 +251,25 @@ describe('m365GraphBatchClient', () => {
       initialBackoffMs: 0,
       jitterRatio: 0,
       maxBatchRetries: 0,
-    });
+    })
 
-    await client.batch([{ id: '1', url: '/x' }]);
-    now = 2000;
-    await client.batch([{ id: '2', url: '/x' }]);
+    await client.batch([{ id: '1', url: '/x' }])
+    now = 2000
+    await client.batch([{ id: '2', url: '/x' }])
 
-    expect(calls[1].headers.authorization).toBe('Bearer t1');
-    expect(calls[3].headers.authorization).toBe('Bearer t2');
-    expect(calls).toHaveLength(4);
-  });
+    expect(calls[1].headers.authorization).toBe('Bearer t1')
+    expect(calls[3].headers.authorization).toBe('Bearer t2')
+    expect(calls).toHaveLength(4)
+  })
 
   test('refresh_token provider throws on non-2xx token response', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios } = createMockAxios([
       {
         response: createAxiosResponse({ status: 400, data: { error: 'invalid_grant' } }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -283,19 +283,21 @@ describe('m365GraphBatchClient', () => {
       initialBackoffMs: 0,
       jitterRatio: 0,
       maxBatchRetries: 0,
-    });
+    })
 
-    await expect(client.batch([{ id: '1', url: '/x' }], { mode: 'strict' })).rejects.toThrow(/OAuth token refresh failed \(400\)/);
-  });
+    await expect(client.batch([{ id: '1', url: '/x' }], { mode: 'strict' })).rejects.toThrow(
+      /OAuth token refresh failed \(400\)/
+    )
+  })
 
   test('refresh_token provider throws when access_token is missing', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios } = createMockAxios([
       {
         response: createAxiosResponse({ data: { expires_in: 3600 } }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -309,19 +311,19 @@ describe('m365GraphBatchClient', () => {
       initialBackoffMs: 0,
       jitterRatio: 0,
       maxBatchRetries: 0,
-    });
+    })
 
-    await expect(client.batch([{ id: '1', url: '/x' }], { mode: 'strict' })).rejects.toThrow(/returned no access_token/);
-  });
+    await expect(client.batch([{ id: '1', url: '/x' }], { mode: 'strict' })).rejects.toThrow(/returned no access_token/)
+  })
 
   test('refresh_token provider throws when expires_in is invalid', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios } = createMockAxios([
       {
         response: createAxiosResponse({ data: { access_token: 't', expires_in: 'nope' } }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -335,18 +337,19 @@ describe('m365GraphBatchClient', () => {
       initialBackoffMs: 0,
       jitterRatio: 0,
       maxBatchRetries: 0,
-    });
+    })
 
-    await expect(client.batch([{ id: '1', url: '/x' }], { mode: 'strict' })).rejects.toThrow(/returned invalid expires_in/);
-  });
-
+    await expect(client.batch([{ id: '1', url: '/x' }], { mode: 'strict' })).rejects.toThrow(
+      /returned invalid expires_in/
+    )
+  })
 
   test('createRefreshTokenAccessTokenProvider uses now() default', async () => {
     const { axios, calls } = createMockAxios([
       {
         response: createAxiosResponse({ data: { access_token: 't', expires_in: 3600 } }),
       },
-    ]);
+    ])
 
     const getToken = createRefreshTokenAccessTokenProvider({
       axios,
@@ -354,11 +357,11 @@ describe('m365GraphBatchClient', () => {
       clientId: 'client',
       clientSecret: 'secret',
       refreshToken: 'refresh',
-    });
+    })
 
-    await expect(getToken()).resolves.toBe('t');
-    expect(calls).toHaveLength(1);
-  });
+    await expect(getToken()).resolves.toBe('t')
+    expect(calls).toHaveLength(1)
+  })
 
   test('createRefreshTokenAccessTokenProvider always sets validateStatus', async () => {
     const { axios, calls } = createMockAxios([
@@ -366,7 +369,7 @@ describe('m365GraphBatchClient', () => {
         matcher: (config) => typeof config.validateStatus === 'function',
         response: createAxiosResponse({ data: { access_token: 't', expires_in: 3600 } }),
       },
-    ]);
+    ])
 
     const getToken = createRefreshTokenAccessTokenProvider({
       axios,
@@ -374,15 +377,15 @@ describe('m365GraphBatchClient', () => {
       clientId: 'client',
       clientSecret: 'secret',
       refreshToken: 'refresh',
-    });
+    })
 
-    await getToken();
-    expect(calls).toHaveLength(1);
-    expect(calls[0].validateStatus(500)).toBe(true);
-  });
+    await getToken()
+    expect(calls).toHaveLength(1)
+    expect(calls[0].validateStatus(500)).toBe(true)
+  })
 
   test('createRefreshTokenAccessTokenProvider validates required auth fields', () => {
-    const { axios } = createMockAxios([]);
+    const { axios } = createMockAxios([])
 
     expect(() =>
       createRefreshTokenAccessTokenProvider({
@@ -392,7 +395,7 @@ describe('m365GraphBatchClient', () => {
         clientSecret: 'secret',
         refreshToken: 'refresh',
       })
-    ).toThrow(/options\.auth\.tenantId is required/);
+    ).toThrow(/options\.auth\.tenantId is required/)
 
     expect(() =>
       createRefreshTokenAccessTokenProvider({
@@ -402,7 +405,7 @@ describe('m365GraphBatchClient', () => {
         clientSecret: 'secret',
         refreshToken: 'refresh',
       })
-    ).toThrow(/options\.auth\.clientId is required/);
+    ).toThrow(/options\.auth\.clientId is required/)
 
     expect(() =>
       createRefreshTokenAccessTokenProvider({
@@ -412,7 +415,7 @@ describe('m365GraphBatchClient', () => {
         clientSecret: null,
         refreshToken: 'refresh',
       })
-    ).toThrow(/options\.auth\.clientSecret is required/);
+    ).toThrow(/options\.auth\.clientSecret is required/)
 
     expect(() =>
       createRefreshTokenAccessTokenProvider({
@@ -422,8 +425,8 @@ describe('m365GraphBatchClient', () => {
         clientSecret: 'secret',
         refreshToken: null,
       })
-    ).toThrow(/options\.auth\.refreshToken is required/);
-  });
+    ).toThrow(/options\.auth\.refreshToken is required/)
+  })
 
   test('createRefreshTokenAccessTokenProvider requires axios.request', () => {
     expect(() =>
@@ -434,7 +437,7 @@ describe('m365GraphBatchClient', () => {
         clientSecret: 'secret',
         refreshToken: 'refresh',
       })
-    ).toThrow(/options\.axios\.request is required/);
+    ).toThrow(/options\.axios\.request is required/)
 
     expect(() =>
       createRefreshTokenAccessTokenProvider({
@@ -444,13 +447,13 @@ describe('m365GraphBatchClient', () => {
         clientSecret: 'secret',
         refreshToken: 'refresh',
       })
-    ).toThrow(/options\.axios\.request is required/);
-  });
+    ).toThrow(/options\.axios\.request is required/)
+  })
 
   test('createRefreshTokenAccessTokenProvider throws when token endpoint returns no response', async () => {
     const axios = {
       request: async () => null,
-    };
+    }
 
     const getToken = createRefreshTokenAccessTokenProvider({
       axios,
@@ -458,15 +461,15 @@ describe('m365GraphBatchClient', () => {
       clientId: 'client',
       clientSecret: 'secret',
       refreshToken: 'refresh',
-    });
+    })
 
-    await expect(getToken()).rejects.toThrow(/OAuth token refresh failed \(unknown\)/);
-  });
+    await expect(getToken()).rejects.toThrow(/OAuth token refresh failed \(unknown\)/)
+  })
 
   test('createRefreshTokenAccessTokenProvider uses plain string body in error', async () => {
     const axios = {
       request: async () => ({ status: 400, data: 'nope' }),
-    };
+    }
 
     const getToken = createRefreshTokenAccessTokenProvider({
       axios,
@@ -474,17 +477,17 @@ describe('m365GraphBatchClient', () => {
       clientId: 'client',
       clientSecret: 'secret',
       refreshToken: 'refresh',
-    });
+    })
 
-    await expect(getToken()).rejects.toThrow(/OAuth token refresh failed \(400\): nope/);
-  });
+    await expect(getToken()).rejects.toThrow(/OAuth token refresh failed \(400\): nope/)
+  })
 
   test('createRefreshTokenAccessTokenProvider shares a single in-flight refresh', async () => {
     const { axios, calls } = createMockAxios([
       {
         response: createAxiosResponse({ data: { access_token: 't', expires_in: 3600 } }),
       },
-    ]);
+    ])
 
     const getToken = createRefreshTokenAccessTokenProvider({
       axios,
@@ -492,30 +495,30 @@ describe('m365GraphBatchClient', () => {
       clientId: 'client',
       clientSecret: 'secret',
       refreshToken: 'refresh',
-    });
+    })
 
-    const [a, b] = await Promise.all([getToken(), getToken()]);
-    expect(a).toBe('t');
-    expect(b).toBe('t');
-    expect(calls).toHaveLength(1);
-  });
+    const [a, b] = await Promise.all([getToken(), getToken()])
+    expect(a).toBe('t')
+    expect(b).toBe('t')
+    expect(calls).toHaveLength(1)
+  })
 
   test('constructor throws when axios dependency is missing', () => {
     jest.isolateModules(() => {
       jest.doMock('axios', () => {
-        throw new Error('not found');
-      });
+        throw new Error('not found')
+      })
 
-      const { M365GraphBatchClient: IsolatedClient } = require('..');
+      const { M365GraphBatchClient: IsolatedClient } = require('..')
 
-      expect(() => new IsolatedClient({ getAccessToken: async () => 't' })).toThrow(/axios dependency not found/);
+      expect(() => new IsolatedClient({ getAccessToken: async () => 't' })).toThrow(/axios dependency not found/)
 
-      jest.dontMock('axios');
-    });
-  });
+      jest.dontMock('axios')
+    })
+  })
 
   test('falls back to relative nextLink when graphBaseUrl is invalid', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios } = createMockAxios([
       {
@@ -540,7 +543,7 @@ describe('m365GraphBatchClient', () => {
         matcher: (config) => config.url === 'not-a-url/users?$skiptoken=abc' && config.method === 'GET',
         response: createAxiosResponse({ data: { value: [{ id: 2 }] } }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -550,26 +553,26 @@ describe('m365GraphBatchClient', () => {
       jitterRatio: 0,
       maxBatchRetries: 0,
       initialBackoffMs: 0,
-    });
+    })
 
-    const out = await client.batch([{ id: '1', url: '/users' }]);
-    expect(out.responses['1'].body.value).toEqual([{ id: 1 }, { id: 2 }]);
-  });
+    const out = await client.batch([{ id: '1', url: '/users' }])
+    expect(out.responses['1'].body.value).toEqual([{ id: 1 }, { id: 2 }])
+  })
 
   test('batch returns empty for empty input', async () => {
-    const { axios } = createMockAxios([]);
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' });
+    const { axios } = createMockAxios([])
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
 
-    await expect(client.batch([])).resolves.toEqual({ responses: {}, responseList: [] });
-  });
+    await expect(client.batch([])).resolves.toEqual({ responses: {}, responseList: [] })
+  })
 
   test('batch throws when requests is not an array', async () => {
-    const { axios } = createMockAxios([]);
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' });
+    const { axios } = createMockAxios([])
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
 
     // eslint-disable-next-line no-undefined
-    await expect(client.batch(undefined)).rejects.toThrow(/requests must be an array/);
-  });
+    await expect(client.batch(undefined)).rejects.toThrow(/requests must be an array/)
+  })
 
   test('batch sends a single $batch request and returns ordered responses', async () => {
     const { axios, calls } = createMockAxios([
@@ -584,22 +587,22 @@ describe('m365GraphBatchClient', () => {
           },
         }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
 
     const out = await client.batch([
       { id: '1', method: 'GET', url: '/users' },
       { id: '2', method: 'GET', url: '/groups' },
-    ]);
+    ])
 
-    expect(calls).toHaveLength(1);
-    expect(out.responseList).toHaveLength(2);
-    expect(out.responseList[0].id).toBe('1');
-    expect(out.responseList[1].id).toBe('2');
-    expect(out.responses['1'].body.id).toBe(1);
-    expect(out.responses['2'].body.id).toBe(2);
-  });
+    expect(calls).toHaveLength(1)
+    expect(out.responseList).toHaveLength(2)
+    expect(out.responseList[0].id).toBe('1')
+    expect(out.responseList[1].id).toBe('2')
+    expect(out.responses['1'].body.id).toBe(1)
+    expect(out.responses['2'].body.id).toBe(2)
+  })
 
   test('strict mode returns legacy shape (no partial/errors)', async () => {
     const { axios } = createMockAxios([
@@ -608,19 +611,19 @@ describe('m365GraphBatchClient', () => {
           data: { responses: [{ id: '1', status: 200, headers: {}, body: { ok: true } }] },
         }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
 
-    const out = await client.batch([{ id: '1', url: '/x' }], { mode: 'strict' });
+    const out = await client.batch([{ id: '1', url: '/x' }], { mode: 'strict' })
 
     expect(out).toEqual({
       responses: {
-        '1': { id: '1', status: 200, headers: {}, body: { ok: true } },
+        1: { id: '1', status: 200, headers: {}, body: { ok: true } },
       },
       responseList: [{ id: '1', status: 200, headers: {}, body: { ok: true } }],
-    });
-  });
+    })
+  })
 
   test('strict chunk execution returns legacy shape', async () => {
     const { axios } = createMockAxios([
@@ -629,17 +632,17 @@ describe('m365GraphBatchClient', () => {
           data: { responses: [{ id: '1', status: 200, headers: {}, body: { ok: true } }] },
         }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 })
 
-    const out = await client._executeChunkWithRetries([{ id: '1', url: '/x' }], { paginate: false, mode: 'strict' });
+    const out = await client._executeChunkWithRetries([{ id: '1', url: '/x' }], { paginate: false, mode: 'strict' })
 
     expect(out).toEqual({
-      responsesById: { '1': { id: '1', status: 200, headers: {}, body: { ok: true } } },
+      responsesById: { 1: { id: '1', status: 200, headers: {}, body: { ok: true } } },
       responseList: [{ id: '1', status: 200, headers: {}, body: { ok: true } }],
-    });
-  });
+    })
+  })
 
   test('splits requests into chunks of maxRequestsPerBatch', async () => {
     const { axios, calls } = createMockAxios([
@@ -662,23 +665,23 @@ describe('m365GraphBatchClient', () => {
           },
         }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
       getAccessToken: async () => 't',
       maxRequestsPerBatch: 2,
-    });
+    })
 
     const out = await client.batch([
       { id: '1', url: '/a' },
       { id: '2', url: '/b' },
       { id: '3', url: '/c' },
-    ]);
+    ])
 
-    expect(calls).toHaveLength(2);
-    expect(out.responseList).toHaveLength(3);
-  });
+    expect(calls).toHaveLength(2)
+    expect(out.responseList).toHaveLength(3)
+  })
 
   test('validateStatus is always provided and returns true', async () => {
     const { axios, calls } = createMockAxios([
@@ -686,26 +689,29 @@ describe('m365GraphBatchClient', () => {
         matcher: (config) => typeof config.validateStatus === 'function' && config.validateStatus(500) === true,
         response: createAxiosResponse({ data: { responses: [{ id: '1', status: 200, headers: {}, body: {} }] } }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
 
-    await client.batch([{ id: '1', url: '/x' }]);
-    expect(calls).toHaveLength(1);
-  });
+    await client.batch([{ id: '1', url: '/x' }])
+    expect(calls).toHaveLength(1)
+  })
 
   test('_postBatchWithGlobalRetry throws when requestChunk exceeds maxRequestsPerBatch', async () => {
-    const { axios } = createMockAxios([]);
+    const { axios } = createMockAxios([])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxRequestsPerBatch: 1 });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxRequestsPerBatch: 1 })
 
-    await expect(client._postBatchWithGlobalRetry([{ id: '1', url: '/a' }, { id: '2', url: '/b' }])).rejects.toThrow(
-      /Batch request size exceeds 1/
-    );
-  });
+    await expect(
+      client._postBatchWithGlobalRetry([
+        { id: '1', url: '/a' },
+        { id: '2', url: '/b' },
+      ])
+    ).rejects.toThrow(/Batch request size exceeds 1/)
+  })
 
   test('global retry: retries whole $batch on 429 with Retry-After', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios, calls } = createMockAxios([
       {
@@ -716,54 +722,54 @@ describe('m365GraphBatchClient', () => {
           data: { responses: [{ id: '1', status: 200, headers: {}, body: { ok: true } }] },
         }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
       getAccessToken: async () => 't',
       sleep: sleep.sleep,
       maxBatchRetries: 2,
-    });
+    })
 
-    const out = await client.batch([{ id: '1', url: '/x' }]);
-    expect(calls).toHaveLength(2);
-    expect(sleep.calls).toEqual([3000]);
-    expect(out.responses['1'].status).toBe(200);
-  });
+    const out = await client.batch([{ id: '1', url: '/x' }])
+    expect(calls).toHaveLength(2)
+    expect(sleep.calls).toEqual([3000])
+    expect(out.responses['1'].status).toBe(200)
+  })
 
   test('requestWithGlobalRetry: throws detailed error for non-retryable status', async () => {
     const { axios } = createMockAxios([
       {
         response: createAxiosResponse({ status: 400, data: { error: { message: 'bad' } } }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 })
 
-    await expect(client._requestWithGlobalRetry({ method: 'GET', url: '/x' })).rejects.toThrow(/Request failed \(400\)/);
-  });
+    await expect(client._requestWithGlobalRetry({ method: 'GET', url: '/x' })).rejects.toThrow(/Request failed \(400\)/)
+  })
 
   test('requestWithGlobalRetry: returns null for 204 with empty body', async () => {
     const { axios } = createMockAxios([
       {
         response: createAxiosResponse({ status: 204, data: undefined }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
 
-    await expect(client._requestWithGlobalRetry({ method: 'GET', url: '/x' })).resolves.toBeNull();
-  });
+    await expect(client._requestWithGlobalRetry({ method: 'GET', url: '/x' })).resolves.toBeNull()
+  })
 
   test('requestWithGlobalRetry: does not sleep when backoff is 0', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios } = createMockAxios([
       { throw: new Error('ECONNRESET') },
       {
         response: createAxiosResponse({ status: 204, data: undefined }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -772,50 +778,55 @@ describe('m365GraphBatchClient', () => {
       jitterRatio: 0,
       maxBatchRetries: 2,
       initialBackoffMs: 0,
-    });
+    })
 
-    await expect(client._requestWithGlobalRetry({ method: 'GET', url: '/x' })).resolves.toBeNull();
-    expect(sleep.calls).toEqual([]);
-  });
+    await expect(client._requestWithGlobalRetry({ method: 'GET', url: '/x' })).resolves.toBeNull()
+    expect(sleep.calls).toEqual([])
+  })
 
   test('requestWithGlobalRetry: uses plain string body in error message', async () => {
     const { axios } = createMockAxios([
       {
         response: createAxiosResponse({ status: 400, data: 'bad request' }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 })
 
-    await expect(client._requestWithGlobalRetry({ method: 'GET', url: '/x' })).rejects.toThrow(/bad request/);
-  });
+    await expect(client._requestWithGlobalRetry({ method: 'GET', url: '/x' })).rejects.toThrow(/bad request/)
+  })
 
   test('requestWithGlobalRetry: stringifies empty body when data is undefined', async () => {
     const { axios } = createMockAxios([
       {
         response: createAxiosResponse({ status: 400, data: undefined }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 })
 
-    await expect(client._requestWithGlobalRetry({ method: 'GET', url: '/x' })).rejects.toThrow(/Request failed \(400\)/);
-  });
+    await expect(client._requestWithGlobalRetry({ method: 'GET', url: '/x' })).rejects.toThrow(/Request failed \(400\)/)
+  })
 
   test('requestWithGlobalRetry: rethrows network error after exceeding maxBatchRetries', async () => {
     const { axios } = createMockAxios([
       {
         throw: new Error('ECONNRESET'),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0, initialBackoffMs: 0 });
+    const client = new M365GraphBatchClient({
+      axios,
+      getAccessToken: async () => 't',
+      maxBatchRetries: 0,
+      initialBackoffMs: 0,
+    })
 
-    await expect(client._requestWithGlobalRetry({ method: 'GET', url: '/x' })).rejects.toThrow(/ECONNRESET/);
-  });
+    await expect(client._requestWithGlobalRetry({ method: 'GET', url: '/x' })).rejects.toThrow(/ECONNRESET/)
+  })
 
   test('global retry: retries on network error with exponential backoff', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios, calls } = createMockAxios([
       { throw: new Error('ECONNRESET') },
@@ -825,7 +836,7 @@ describe('m365GraphBatchClient', () => {
           data: { responses: [{ id: '1', status: 200, headers: {}, body: {} }] },
         }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -835,18 +846,18 @@ describe('m365GraphBatchClient', () => {
       maxBatchRetries: 5,
       initialBackoffMs: 10,
       maxBackoffMs: 1000,
-    });
+    })
 
-    await client.batch([{ id: '1', url: '/x' }]);
+    await client.batch([{ id: '1', url: '/x' }])
 
-    expect(calls).toHaveLength(3);
-    expect(sleep.calls).toEqual([10, 20]);
-  });
+    expect(calls).toHaveLength(3)
+    expect(sleep.calls).toEqual([10, 20])
+  })
 
   test('global retry: retries on 500/502 and uses Retry-After HTTP-date when present', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
-    const retryAfterDate = 'Thu, 01 Jan 1970 00:00:01 GMT';
+    const retryAfterDate = 'Thu, 01 Jan 1970 00:00:01 GMT'
 
     const { axios, calls } = createMockAxios([
       {
@@ -867,7 +878,7 @@ describe('m365GraphBatchClient', () => {
           data: { responses: [{ id: '1', status: 200, headers: {}, body: { ok: true } }] },
         }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -878,21 +889,21 @@ describe('m365GraphBatchClient', () => {
       maxBatchRetries: 5,
       initialBackoffMs: 10,
       maxBackoffMs: 1000,
-    });
+    })
 
-    const out = await client.batch([{ id: '1', url: '/x' }]);
+    const out = await client.batch([{ id: '1', url: '/x' }])
 
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(3)
     // 1st retry is driven by HTTP-date (1000ms), 2nd uses backoff (20ms).
-    expect(sleep.calls).toEqual([1000, 20]);
-    expect(out.responses['1'].status).toBe(200);
-  });
+    expect(sleep.calls).toEqual([1000, 20])
+    expect(out.responses['1'].status).toBe(200)
+  })
 
   test('global retry: throws after exceeding maxBatchRetries on retryable status', async () => {
     const { axios } = createMockAxios([
       { response: createAxiosResponse({ status: 500, data: 'e1' }) },
       { response: createAxiosResponse({ status: 500, data: 'e2' }) },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -900,13 +911,13 @@ describe('m365GraphBatchClient', () => {
       jitterRatio: 0,
       maxBatchRetries: 1,
       initialBackoffMs: 0,
-    });
+    })
 
-    await expect(client.batch([{ id: '1', url: '/x' }], { mode: 'strict' })).rejects.toThrow(/exceeded retries/);
-  });
+    await expect(client.batch([{ id: '1', url: '/x' }], { mode: 'strict' })).rejects.toThrow(/exceeded retries/)
+  })
 
   test('sub-request retry: retries only failed subrequests and respects Retry-After', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios, calls } = createMockAxios([
       {
@@ -925,7 +936,7 @@ describe('m365GraphBatchClient', () => {
           data: { responses: [{ id: '2', status: 200, headers: {}, body: { ok: 2 } }] },
         }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -933,23 +944,23 @@ describe('m365GraphBatchClient', () => {
       sleep: sleep.sleep,
       jitterRatio: 0,
       maxBatchRetries: 0,
-    });
+    })
 
     const out = await client.batch([
       { id: '1', url: '/a' },
       { id: '2', url: '/b' },
-    ]);
+    ])
 
-    expect(calls).toHaveLength(2);
-    expect(sleep.calls).toEqual([2000]);
-    expect(out.responses['1'].body.ok).toBe(1);
-    expect(out.responses['2'].body.ok).toBe(2);
-  });
+    expect(calls).toHaveLength(2)
+    expect(sleep.calls).toEqual([2000])
+    expect(out.responses['1'].body.ok).toBe(1)
+    expect(out.responses['2'].body.ok).toBe(2)
+  })
 
   test('sub-request retry: retries 500 and respects Retry-After HTTP-date', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
-    const retryAfterDate = 'Thu, 01 Jan 1970 00:00:01 GMT';
+    const retryAfterDate = 'Thu, 01 Jan 1970 00:00:01 GMT'
 
     const { axios, calls } = createMockAxios([
       {
@@ -967,7 +978,7 @@ describe('m365GraphBatchClient', () => {
           },
         }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -976,17 +987,17 @@ describe('m365GraphBatchClient', () => {
       now: () => 0,
       jitterRatio: 0,
       maxBatchRetries: 0,
-    });
+    })
 
-    const out = await client.batch([{ id: '1', url: '/users' }]);
+    const out = await client.batch([{ id: '1', url: '/users' }])
 
-    expect(calls).toHaveLength(2);
-    expect(sleep.calls).toEqual([1000]);
-    expect(out.responses['1'].status).toBe(200);
-  });
+    expect(calls).toHaveLength(2)
+    expect(sleep.calls).toEqual([1000])
+    expect(out.responses['1'].status).toBe(200)
+  })
 
   test('sub-request retry: uses exponential backoff when no Retry-After', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios } = createMockAxios([
       {
@@ -1004,7 +1015,7 @@ describe('m365GraphBatchClient', () => {
           data: { responses: [{ id: '1', status: 200, headers: {}, body: { ok: true } }] },
         }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -1014,21 +1025,33 @@ describe('m365GraphBatchClient', () => {
       initialBackoffMs: 10,
       maxBackoffMs: 1000,
       maxBatchRetries: 0,
-    });
+    })
 
-    const out = await client.batch([{ id: '1', url: '/x' }]);
-    expect(out.responses['1'].status).toBe(200);
-    expect(sleep.calls).toEqual([10, 20]);
-  });
+    const out = await client.batch([{ id: '1', url: '/x' }])
+    expect(out.responses['1'].status).toBe(200)
+    expect(sleep.calls).toEqual([10, 20])
+  })
 
   test('sub-request retry: throws when exceeds maxSubrequestRetries', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios } = createMockAxios([
-      { response: createAxiosResponse({ data: { responses: [{ id: '1', status: 429, headers: { 'Retry-After': '0' }, body: {} }] } }) },
-      { response: createAxiosResponse({ data: { responses: [{ id: '1', status: 429, headers: { 'Retry-After': '0' }, body: {} }] } }) },
-      { response: createAxiosResponse({ data: { responses: [{ id: '1', status: 429, headers: { 'Retry-After': '0' }, body: {} }] } }) },
-    ]);
+      {
+        response: createAxiosResponse({
+          data: { responses: [{ id: '1', status: 429, headers: { 'Retry-After': '0' }, body: {} }] },
+        }),
+      },
+      {
+        response: createAxiosResponse({
+          data: { responses: [{ id: '1', status: 429, headers: { 'Retry-After': '0' }, body: {} }] },
+        }),
+      },
+      {
+        response: createAxiosResponse({
+          data: { responses: [{ id: '1', status: 429, headers: { 'Retry-After': '0' }, body: {} }] },
+        }),
+      },
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -1036,18 +1059,26 @@ describe('m365GraphBatchClient', () => {
       sleep: sleep.sleep,
       maxSubrequestRetries: 1,
       maxBatchRetries: 0,
-    });
+    })
 
-    await expect(client.batch([{ id: '1', url: '/x' }], { mode: 'strict' })).rejects.toThrow(/exceeded retries/);
-  });
+    await expect(client.batch([{ id: '1', url: '/x' }], { mode: 'strict' })).rejects.toThrow(/exceeded retries/)
+  })
 
   test('partial mode: does not throw when subrequest exceeds retries (returns last subresponse)', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios, calls } = createMockAxios([
-      { response: createAxiosResponse({ data: { responses: [{ id: '1', status: 429, headers: { 'Retry-After': '0' }, body: { e: 1 } }] } }) },
-      { response: createAxiosResponse({ data: { responses: [{ id: '1', status: 429, headers: { 'Retry-After': '0' }, body: { e: 2 } }] } }) },
-    ]);
+      {
+        response: createAxiosResponse({
+          data: { responses: [{ id: '1', status: 429, headers: { 'Retry-After': '0' }, body: { e: 1 } }] },
+        }),
+      },
+      {
+        response: createAxiosResponse({
+          data: { responses: [{ id: '1', status: 429, headers: { 'Retry-After': '0' }, body: { e: 2 } }] },
+        }),
+      },
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -1057,20 +1088,20 @@ describe('m365GraphBatchClient', () => {
       maxBatchRetries: 0,
       initialBackoffMs: 0,
       jitterRatio: 0,
-    });
+    })
 
-    const out = await client.batch([{ id: '1', url: '/x' }], { mode: 'partial' });
+    const out = await client.batch([{ id: '1', url: '/x' }], { mode: 'partial' })
 
-    expect(calls).toHaveLength(2);
-    expect(out.partial).toBe(true);
-    expect(out.errors).toHaveLength(1);
-    expect(out.errors[0].id).toBe('1');
-    expect(out.responses['1'].status).toBe(429);
-    expect(out.responses['1'].body).toEqual({ e: 2 });
-  });
+    expect(calls).toHaveLength(2)
+    expect(out.partial).toBe(true)
+    expect(out.errors).toHaveLength(1)
+    expect(out.errors[0].id).toBe('1')
+    expect(out.responses['1'].status).toBe(429)
+    expect(out.responses['1'].body).toEqual({ e: 2 })
+  })
 
   test('sub-request retry: uses max Retry-After when multiple subrequests are pending', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios } = createMockAxios([
       {
@@ -1093,7 +1124,7 @@ describe('m365GraphBatchClient', () => {
           },
         }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -1101,17 +1132,17 @@ describe('m365GraphBatchClient', () => {
       sleep: sleep.sleep,
       jitterRatio: 0,
       maxBatchRetries: 0,
-    });
+    })
 
     const out = await client.batch([
       { id: '1', url: '/a' },
       { id: '2', url: '/b' },
-    ]);
+    ])
 
-    expect(out.responses['1'].status).toBe(200);
-    expect(out.responses['2'].status).toBe(200);
-    expect(sleep.calls).toEqual([3000]);
-  });
+    expect(out.responses['1'].status).toBe(200)
+    expect(out.responses['2'].status).toBe(200)
+    expect(sleep.calls).toEqual([3000])
+  })
 
   test('sub-request retry: does not retry non-retryable subresponse status', async () => {
     const { axios, calls } = createMockAxios([
@@ -1122,15 +1153,15 @@ describe('m365GraphBatchClient', () => {
           },
         }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 })
 
-    const out = await client.batch([{ id: '1', url: '/x' }]);
+    const out = await client.batch([{ id: '1', url: '/x' }])
 
-    expect(calls).toHaveLength(1);
-    expect(out.responses['1'].status).toBe(404);
-  });
+    expect(calls).toHaveLength(1)
+    expect(out.responses['1'].status).toBe(404)
+  })
 
   test('pagination: follows @odata.nextLink and aggregates value arrays', async () => {
     const { axios, calls } = createMockAxios([
@@ -1152,7 +1183,8 @@ describe('m365GraphBatchClient', () => {
         }),
       },
       {
-        matcher: (config) => config.url === 'https://graph.microsoft.com/v1.0/users?$skiptoken=abc' && config.method === 'GET',
+        matcher: (config) =>
+          config.url === 'https://graph.microsoft.com/v1.0/users?$skiptoken=abc' && config.method === 'GET',
         response: createAxiosResponse({
           data: {
             value: [{ id: 2 }],
@@ -1161,29 +1193,30 @@ describe('m365GraphBatchClient', () => {
         }),
       },
       {
-        matcher: (config) => config.url === 'https://graph.microsoft.com/v1.0/users?$skiptoken=def' && config.method === 'GET',
+        matcher: (config) =>
+          config.url === 'https://graph.microsoft.com/v1.0/users?$skiptoken=def' && config.method === 'GET',
         response: createAxiosResponse({
           data: {
             value: [{ id: 3 }],
           },
         }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
 
-    const out = await client.batch([{ id: '1', url: '/users' }]);
-    expect(calls).toHaveLength(3);
-    expect(out.responses['1'].body.value).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
-    expect(out.responses['1'].body['@odata.nextLink']).toBeUndefined();
-  });
+    const out = await client.batch([{ id: '1', url: '/users' }])
+    expect(calls).toHaveLength(3)
+    expect(out.responses['1'].body.value).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }])
+    expect(out.responses['1'].body['@odata.nextLink']).toBeUndefined()
+  })
 
   test('pagination handler: default onError is used in partial mode', async () => {
     const handler = createPaginationHandler({
       getWithGlobalRetry: async () => 'not-json',
       graphOrigin: 'https://graph.microsoft.com',
       maxPaginationPages: 10,
-    });
+    })
 
     const responseList = [
       {
@@ -1195,16 +1228,18 @@ describe('m365GraphBatchClient', () => {
           '@odata.nextLink': '/v1.0/users?$skiptoken=abc',
         },
       },
-    ];
+    ]
 
     const requestMetaById = {
-      '1': { method: 'GET' },
-    };
+      1: { method: 'GET' },
+    }
 
-    await expect(handler.paginateResponsesInPlace(responseList, requestMetaById, { mode: 'partial' })).resolves.toBeUndefined();
-    expect(responseList[0].body.value).toEqual([{ id: 1 }]);
-    expect(responseList[0].body['@odata.nextLink']).toBe('https://graph.microsoft.com/v1.0/users?$skiptoken=abc');
-  });
+    await expect(
+      handler.paginateResponsesInPlace(responseList, requestMetaById, { mode: 'partial' })
+    ).resolves.toBeUndefined()
+    expect(responseList[0].body.value).toEqual([{ id: 1 }])
+    expect(responseList[0].body['@odata.nextLink']).toBe('https://graph.microsoft.com/v1.0/users?$skiptoken=abc')
+  })
 
   test('pagination: can be disabled via options.paginate=false', async () => {
     const { axios, calls } = createMockAxios([
@@ -1225,18 +1260,18 @@ describe('m365GraphBatchClient', () => {
           },
         }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
 
-    const out = await client.batch([{ id: '1', url: '/users' }], { paginate: false });
-    expect(calls).toHaveLength(1);
-    expect(out.responses['1'].body.value).toEqual([{ id: 1 }]);
-    expect(out.responses['1'].body['@odata.nextLink']).toBeDefined();
-  });
+    const out = await client.batch([{ id: '1', url: '/users' }], { paginate: false })
+    expect(calls).toHaveLength(1)
+    expect(out.responses['1'].body.value).toEqual([{ id: 1 }])
+    expect(out.responses['1'].body['@odata.nextLink']).toBeDefined()
+  })
 
   test('GET pagination uses global retry on throttling', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios, calls } = createMockAxios([
       {
@@ -1262,20 +1297,20 @@ describe('m365GraphBatchClient', () => {
       {
         response: createAxiosResponse({ data: { value: [{ id: 2 }] } }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
       getAccessToken: async () => 't',
       sleep: sleep.sleep,
       maxBatchRetries: 2,
-    });
+    })
 
-    const out = await client.batch([{ id: '1', url: '/users' }]);
-    expect(calls).toHaveLength(3);
-    expect(sleep.calls).toEqual([1000]);
-    expect(out.responses['1'].body.value).toEqual([{ id: 1 }, { id: 2 }]);
-  });
+    const out = await client.batch([{ id: '1', url: '/users' }])
+    expect(calls).toHaveLength(3)
+    expect(sleep.calls).toEqual([1000])
+    expect(out.responses['1'].body.value).toEqual([{ id: 1 }, { id: 2 }])
+  })
 
   test('does not auto-paginate non-GET requests', async () => {
     const { axios, calls } = createMockAxios([
@@ -1296,14 +1331,14 @@ describe('m365GraphBatchClient', () => {
           },
         }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
 
-    const out = await client.batch([{ id: '1', method: 'POST', url: '/users' }]);
-    expect(calls).toHaveLength(1);
-    expect(out.responses['1'].body['@odata.nextLink']).toBeDefined();
-  });
+    const out = await client.batch([{ id: '1', method: 'POST', url: '/users' }])
+    expect(calls).toHaveLength(1)
+    expect(out.responses['1'].body['@odata.nextLink']).toBeDefined()
+  })
 
   test('pagination supports relative @odata.nextLink', async () => {
     const { axios, calls } = createMockAxios([
@@ -1325,17 +1360,18 @@ describe('m365GraphBatchClient', () => {
         }),
       },
       {
-        matcher: (config) => config.url === 'https://graph.microsoft.com/users?$skiptoken=abc' && config.method === 'GET',
+        matcher: (config) =>
+          config.url === 'https://graph.microsoft.com/users?$skiptoken=abc' && config.method === 'GET',
         response: createAxiosResponse({ data: { value: [{ id: 2 }] } }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
 
-    const out = await client.batch([{ id: '1', url: '/users' }]);
-    expect(calls).toHaveLength(2);
-    expect(out.responses['1'].body.value).toEqual([{ id: 1 }, { id: 2 }]);
-  });
+    const out = await client.batch([{ id: '1', url: '/users' }])
+    expect(calls).toHaveLength(2)
+    expect(out.responses['1'].body.value).toEqual([{ id: 1 }, { id: 2 }])
+  })
 
   test('pagination ignores responses not eligible for pagination', async () => {
     const { axios, calls } = createMockAxios([
@@ -1348,35 +1384,43 @@ describe('m365GraphBatchClient', () => {
                 id: 'a',
                 status: 404,
                 headers: {},
-                body: { value: [{ id: 1 }], '@odata.nextLink': 'https://graph.microsoft.com/v1.0/users?$skiptoken=abc' },
+                body: {
+                  value: [{ id: 1 }],
+                  '@odata.nextLink': 'https://graph.microsoft.com/v1.0/users?$skiptoken=abc',
+                },
               },
               // 2xx but body not object
               { id: 'b', status: 200, headers: {}, body: 'x' },
               // 2xx but value not an array
-              { id: 'c', status: 200, headers: {}, body: { value: 'x', '@odata.nextLink': 'https://graph.microsoft.com/v1.0/users?$skiptoken=abc' } },
+              {
+                id: 'c',
+                status: 200,
+                headers: {},
+                body: { value: 'x', '@odata.nextLink': 'https://graph.microsoft.com/v1.0/users?$skiptoken=abc' },
+              },
               // 2xx and value array but no nextLink
               { id: 'd', status: 200, headers: {}, body: { value: [{ id: 1 }] } },
             ],
           },
         }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 })
 
     const out = await client.batch([
       { id: 'a', url: '/x' },
       { id: 'b', url: '/x' },
       { id: 'c', url: '/x' },
       { id: 'd', url: '/x' },
-    ]);
+    ])
 
-    expect(calls).toHaveLength(1);
-    expect(out.responses['a'].status).toBe(404);
-    expect(out.responses['b'].body).toBe('x');
-    expect(out.responses['c'].body.value).toBe('x');
-    expect(out.responses['d'].body.value).toEqual([{ id: 1 }]);
-  });
+    expect(calls).toHaveLength(1)
+    expect(out.responses['a'].status).toBe(404)
+    expect(out.responses['b'].body).toBe('x')
+    expect(out.responses['c'].body.value).toBe('x')
+    expect(out.responses['d'].body.value).toEqual([{ id: 1 }])
+  })
 
   test('pagination does not resolve absolute nextLink against graphOrigin', async () => {
     const { axios, calls } = createMockAxios([
@@ -1401,18 +1445,18 @@ describe('m365GraphBatchClient', () => {
         matcher: (config) => config.url === 'https://graph.microsoft.com/v1.0/users?$skiptoken=abc',
         response: createAxiosResponse({ data: { value: [{ id: 2 }] } }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 })
 
-    const out = await client.batch([{ id: '1', url: '/users' }]);
-    expect(calls).toHaveLength(2);
-    expect(out.responses['1'].body.value).toEqual([{ id: 1 }, { id: 2 }]);
-  });
+    const out = await client.batch([{ id: '1', url: '/users' }])
+    expect(calls).toHaveLength(2)
+    expect(out.responses['1'].body.value).toEqual([{ id: 1 }, { id: 2 }])
+  })
 
   test('paginateResponsesInPlace handles missing requestMetaById', async () => {
-    const { axios } = createMockAxios([]);
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' });
+    const { axios } = createMockAxios([])
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
 
     await expect(
       client._paginateResponsesInPlace([
@@ -1423,8 +1467,8 @@ describe('m365GraphBatchClient', () => {
           body: { value: [{ id: 1 }], '@odata.nextLink': 'https://graph.microsoft.com/v1.0/users?$skiptoken=abc' },
         },
       ])
-    ).resolves.toBeUndefined();
-  });
+    ).resolves.toBeUndefined()
+  })
 
   test('pagination ignores page.value when it is not an array', async () => {
     const { axios, calls } = createMockAxios([
@@ -1452,38 +1496,42 @@ describe('m365GraphBatchClient', () => {
           },
         }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 })
 
-    const out = await client.batch([{ id: '1', url: '/users' }]);
-    expect(calls).toHaveLength(2);
-    expect(out.responses['1'].body.value).toEqual([{ id: 1 }]);
-  });
+    const out = await client.batch([{ id: '1', url: '/users' }])
+    expect(calls).toHaveLength(2)
+    expect(out.responses['1'].body.value).toEqual([{ id: 1 }])
+  })
 
   test('throws on invalid $batch response shape', async () => {
     const { axios } = createMockAxios([
       {
         response: createAxiosResponse({ data: { notResponses: [] } }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
 
-    await expect(client.batch([{ id: '1', url: '/users' }], { mode: 'strict' })).rejects.toThrow(/Invalid \$batch response shape/);
-  });
+    await expect(client.batch([{ id: '1', url: '/users' }], { mode: 'strict' })).rejects.toThrow(
+      /Invalid \$batch response shape/
+    )
+  })
 
   test('throws on non-retryable HTTP status (e.g. 401)', async () => {
     const { axios } = createMockAxios([
       {
         response: createAxiosResponse({ status: 401, data: { error: { message: 'Unauthorized' } } }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 })
 
-    await expect(client.batch([{ id: '1', url: '/users' }], { mode: 'strict' })).rejects.toThrow(/Request failed \(401\)/);
-  });
+    await expect(client.batch([{ id: '1', url: '/users' }], { mode: 'strict' })).rejects.toThrow(
+      /Request failed \(401\)/
+    )
+  })
 
   test('duplicate request ids: last response wins in responses map', async () => {
     const { axios } = createMockAxios([
@@ -1497,13 +1545,13 @@ describe('m365GraphBatchClient', () => {
           },
         }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
 
-    const out = await client.batch([{ id: '1', url: '/a' }]);
-    expect(out.responses['1'].body.seq).toBe(2);
-  });
+    const out = await client.batch([{ id: '1', url: '/a' }])
+    expect(out.responses['1'].body.seq).toBe(2)
+  })
 
   test('missing subresponse is treated as retryable and retried', async () => {
     const { axios, calls } = createMockAxios([
@@ -1521,23 +1569,28 @@ describe('m365GraphBatchClient', () => {
           },
         }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0, initialBackoffMs: 0 });
+    const client = new M365GraphBatchClient({
+      axios,
+      getAccessToken: async () => 't',
+      maxBatchRetries: 0,
+      initialBackoffMs: 0,
+    })
 
-    const out = await client.batch([{ id: '1', url: '/a' }]);
-    expect(calls).toHaveLength(2);
-    expect(out.responses['1'].body.ok).toBe(true);
-  });
+    const out = await client.batch([{ id: '1', url: '/a' }])
+    expect(calls).toHaveLength(2)
+    expect(out.responses['1'].body.ok).toBe(true)
+  })
 
   test('missing subresponse: throws after exceeding maxSubrequestRetries', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios, calls } = createMockAxios([
       { response: createAxiosResponse({ data: { responses: [] } }) },
       { response: createAxiosResponse({ data: { responses: [] } }) },
       { response: createAxiosResponse({ data: { responses: [] } }) },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -1547,20 +1600,20 @@ describe('m365GraphBatchClient', () => {
       maxBatchRetries: 0,
       maxSubrequestRetries: 1,
       initialBackoffMs: 0,
-    });
+    })
 
-    await expect(client.batch([{ id: '1', url: '/a' }], { mode: 'strict' })).rejects.toThrow(/exceeded retries/);
+    await expect(client.batch([{ id: '1', url: '/a' }], { mode: 'strict' })).rejects.toThrow(/exceeded retries/)
     // initial + 1 retry; second retry attempt triggers the throw before calling $batch.
-    expect(calls).toHaveLength(2);
-  });
+    expect(calls).toHaveLength(2)
+  })
 
   test('partial mode: missing subresponse creates synthetic 599 response', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios, calls } = createMockAxios([
       { response: createAxiosResponse({ data: { responses: [] } }) },
       { response: createAxiosResponse({ data: { responses: [] } }) },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -1570,19 +1623,19 @@ describe('m365GraphBatchClient', () => {
       maxBatchRetries: 0,
       maxSubrequestRetries: 1,
       initialBackoffMs: 0,
-    });
+    })
 
-    const out = await client.batch([{ id: '1', url: '/a' }], { mode: 'partial' });
+    const out = await client.batch([{ id: '1', url: '/a' }], { mode: 'partial' })
 
-    expect(calls).toHaveLength(2);
-    expect(out.partial).toBe(true);
-    expect(out.errors).toHaveLength(1);
-    expect(out.responses['1'].status).toBe(599);
-    expect(out.responses['1'].body.error.code).toBe('SubrequestExceededRetries');
-  });
+    expect(calls).toHaveLength(2)
+    expect(out.partial).toBe(true)
+    expect(out.errors).toHaveLength(1)
+    expect(out.responses['1'].status).toBe(599)
+    expect(out.responses['1'].body.error.code).toBe('SubrequestExceededRetries')
+  })
 
   test('pagination retries on network error during nextLink fetch', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios, calls } = createMockAxios([
       {
@@ -1611,7 +1664,7 @@ describe('m365GraphBatchClient', () => {
         // retry success
         response: createAxiosResponse({ data: { value: [{ id: 2 }] } }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -1621,16 +1674,16 @@ describe('m365GraphBatchClient', () => {
       maxBatchRetries: 2,
       initialBackoffMs: 10,
       maxBackoffMs: 1000,
-    });
+    })
 
-    const out = await client.batch([{ id: '1', url: '/users' }]);
-    expect(calls).toHaveLength(3);
-    expect(sleep.calls).toEqual([10]);
-    expect(out.responses['1'].body.value).toEqual([{ id: 1 }, { id: 2 }]);
-  });
+    const out = await client.batch([{ id: '1', url: '/users' }])
+    expect(calls).toHaveLength(3)
+    expect(sleep.calls).toEqual([10])
+    expect(out.responses['1'].body.value).toEqual([{ id: 1 }, { id: 2 }])
+  })
 
   test('pagination retries on retryable HTTP status (e.g. 502) during nextLink fetch', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios, calls } = createMockAxios([
       {
@@ -1661,7 +1714,7 @@ describe('m365GraphBatchClient', () => {
           data: { value: [{ id: 2 }] },
         }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -1671,14 +1724,14 @@ describe('m365GraphBatchClient', () => {
       maxBatchRetries: 2,
       initialBackoffMs: 10,
       maxBackoffMs: 1000,
-    });
+    })
 
-    const out = await client.batch([{ id: '1', url: '/users' }]);
+    const out = await client.batch([{ id: '1', url: '/users' }])
 
-    expect(calls).toHaveLength(3);
-    expect(sleep.calls).toEqual([10]);
-    expect(out.responses['1'].body.value).toEqual([{ id: 1 }, { id: 2 }]);
-  });
+    expect(calls).toHaveLength(3)
+    expect(sleep.calls).toEqual([10])
+    expect(out.responses['1'].body.value).toEqual([{ id: 1 }, { id: 2 }])
+  })
 
   test('pagination throws when nextLink fetch returns non-JSON', async () => {
     const { axios } = createMockAxios([
@@ -1704,12 +1757,14 @@ describe('m365GraphBatchClient', () => {
           data: 'not-json',
         }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 })
 
-    await expect(client.batch([{ id: '1', url: '/users' }], { mode: 'strict' })).rejects.toThrow(/Pagination returned non-JSON/);
-  });
+    await expect(client.batch([{ id: '1', url: '/users' }], { mode: 'strict' })).rejects.toThrow(
+      /Pagination returned non-JSON/
+    )
+  })
 
   test('partial mode: pagination non-JSON does not throw (keeps nextLink)', async () => {
     const { axios, calls } = createMockAxios([
@@ -1735,20 +1790,20 @@ describe('m365GraphBatchClient', () => {
           data: 'not-json',
         }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 });
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 })
 
-    const out = await client.batch([{ id: '1', url: '/users' }], { mode: 'partial' });
+    const out = await client.batch([{ id: '1', url: '/users' }], { mode: 'partial' })
 
-    expect(calls).toHaveLength(2);
-    expect(out.partial).toBe(true);
-    expect(out.errors).toHaveLength(1);
-    expect(out.errors[0].id).toBe('1');
-    expect(out.errors[0].stage).toBe('pagination');
-    expect(out.responses['1'].body.value).toEqual([{ id: 1 }]);
-    expect(out.responses['1'].body['@odata.nextLink']).toBe('https://graph.microsoft.com/v1.0/users?$skiptoken=abc');
-  });
+    expect(calls).toHaveLength(2)
+    expect(out.partial).toBe(true)
+    expect(out.errors).toHaveLength(1)
+    expect(out.errors[0].id).toBe('1')
+    expect(out.errors[0].stage).toBe('pagination')
+    expect(out.responses['1'].body.value).toEqual([{ id: 1 }])
+    expect(out.responses['1'].body['@odata.nextLink']).toBe('https://graph.microsoft.com/v1.0/users?$skiptoken=abc')
+  })
 
   test('partial mode: pagination max pages does not throw (keeps nextLink)', async () => {
     const { axios, calls } = createMockAxios([
@@ -1769,25 +1824,25 @@ describe('m365GraphBatchClient', () => {
           },
         }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
       getAccessToken: async () => 't',
       maxBatchRetries: 0,
       maxPaginationPages: 0,
-    });
+    })
 
-    const out = await client.batch([{ id: '1', url: '/users' }], { mode: 'partial' });
+    const out = await client.batch([{ id: '1', url: '/users' }], { mode: 'partial' })
 
-    expect(calls).toHaveLength(1);
-    expect(out.partial).toBe(true);
-    expect(out.errors).toHaveLength(1);
-    expect(out.errors[0].id).toBe('1');
-    expect(out.errors[0].stage).toBe('pagination');
-    expect(out.responses['1'].body.value).toEqual([{ id: 1 }]);
-    expect(out.responses['1'].body['@odata.nextLink']).toBe('https://graph.microsoft.com/v1.0/users?$skiptoken=abc');
-  });
+    expect(calls).toHaveLength(1)
+    expect(out.partial).toBe(true)
+    expect(out.errors).toHaveLength(1)
+    expect(out.errors[0].id).toBe('1')
+    expect(out.errors[0].stage).toBe('pagination')
+    expect(out.responses['1'].body.value).toEqual([{ id: 1 }])
+    expect(out.responses['1'].body['@odata.nextLink']).toBe('https://graph.microsoft.com/v1.0/users?$skiptoken=abc')
+  })
 
   test('pagination resolveNextLink falls back to raw link when graphOrigin is unset', async () => {
     const { axios, calls } = createMockAxios([
@@ -1813,17 +1868,22 @@ describe('m365GraphBatchClient', () => {
         matcher: (config) => config.url === 'not-a-url/users?$skiptoken=abc',
         response: createAxiosResponse({ data: { value: [{ id: 2 }] } }),
       },
-    ]);
+    ])
 
-    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', graphBaseUrl: 'not-a-url', maxBatchRetries: 0 });
+    const client = new M365GraphBatchClient({
+      axios,
+      getAccessToken: async () => 't',
+      graphBaseUrl: 'not-a-url',
+      maxBatchRetries: 0,
+    })
 
-    const out = await client.batch([{ id: '1', url: '/users' }]);
-    expect(calls).toHaveLength(2);
-    expect(out.responses['1'].body.value).toEqual([{ id: 1 }, { id: 2 }]);
-  });
+    const out = await client.batch([{ id: '1', url: '/users' }])
+    expect(calls).toHaveLength(2)
+    expect(out.responses['1'].body.value).toEqual([{ id: 1 }, { id: 2 }])
+  })
 
   test('jitter backoff stays deterministic when rng is injected', async () => {
-    const sleep = createMockSleep();
+    const sleep = createMockSleep()
 
     const { axios } = createMockAxios([
       { throw: new Error('ECONNRESET') },
@@ -1832,7 +1892,7 @@ describe('m365GraphBatchClient', () => {
           data: { responses: [{ id: '1', status: 200, headers: {}, body: {} }] },
         }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
@@ -1843,13 +1903,13 @@ describe('m365GraphBatchClient', () => {
       initialBackoffMs: 100,
       maxBackoffMs: 1000,
       rng: () => 0, // pick minimum jitter
-    });
+    })
 
-    await client.batch([{ id: '1', url: '/x' }]);
+    await client.batch([{ id: '1', url: '/x' }])
 
     // With jitterRatio=0.25 and rng()=0 -> min = 100*(1-0.25)=75
-    expect(sleep.calls).toEqual([75]);
-  });
+    expect(sleep.calls).toEqual([75])
+  })
 
   test('pagination stops after maxPaginationPages', async () => {
     const { axios, calls } = createMockAxios([
@@ -1878,15 +1938,17 @@ describe('m365GraphBatchClient', () => {
           },
         }),
       },
-    ]);
+    ])
 
     const client = new M365GraphBatchClient({
       axios,
       getAccessToken: async () => 't',
       maxPaginationPages: 1,
-    });
+    })
 
-    await expect(client.batch([{ id: '1', url: '/users' }], { mode: 'strict' })).rejects.toThrow(/Pagination exceeded max pages/);
-    expect(calls).toHaveLength(2);
-  });
-});
+    await expect(client.batch([{ id: '1', url: '/users' }], { mode: 'strict' })).rejects.toThrow(
+      /Pagination exceeded max pages/
+    )
+    expect(calls).toHaveLength(2)
+  })
+})

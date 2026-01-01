@@ -5,7 +5,7 @@ const {
   chunkArray,
   toRelativeBatchUrl,
   toFullUrl,
-} = require('./internal/utils');
+} = require('./internal/utils')
 
 /**
  * @typedef {'strict'|'partial'} BatchMode
@@ -68,9 +68,9 @@ const {
  * @property {BatchPartialError[]} errors
  */
 
-const { createBackoff } = require('./internal/backoff');
-const { createPaginationHandler } = require('./internal/pagination');
-const { createRefreshTokenAccessTokenProvider } = require('./internal/tokenProvider');
+const { createBackoff } = require('./internal/backoff')
+const { createPaginationHandler } = require('./internal/pagination')
+const { createRefreshTokenAccessTokenProvider } = require('./internal/tokenProvider')
 
 const {
   RequestFailedError,
@@ -78,33 +78,33 @@ const {
   SubrequestExceededRetriesError,
   InvalidBatchResponseShapeError,
   BatchRequestSizeExceededError,
-} = require('./errors');
+} = require('./errors')
 
 class M365GraphBatchClient {
   constructor(options) {
-    if (!options) throw new Error('options is required');
+    if (!options) throw new Error('options is required')
 
-    const axiosInstance = options.axios || options.axiosInstance;
+    const axiosInstance = options.axios || options.axiosInstance
     if (axiosInstance) {
-      if (typeof axiosInstance.request !== 'function') throw new Error('options.axios.request is required');
-      this._axios = axiosInstance;
+      if (typeof axiosInstance.request !== 'function') throw new Error('options.axios.request is required')
+      this._axios = axiosInstance
     } else {
       // Lazy-require, so tests can inject a mock without deps.
-      let axios;
+      let axios
       try {
-        axios = require('axios');
+        axios = require('axios')
       } catch {
-        throw new Error('options.axios is required (axios dependency not found)');
+        throw new Error('options.axios is required (axios dependency not found)')
       }
 
-      this._axios = axios;
+      this._axios = axios
     }
 
-    this._sleep = options.sleep || createDefaultSleep();
-    this._now = options.now || (() => Date.now());
+    this._sleep = options.sleep || createDefaultSleep()
+    this._now = options.now || (() => Date.now())
 
     if (options.getAccessToken && typeof options.getAccessToken === 'function') {
-      this._getAccessToken = options.getAccessToken;
+      this._getAccessToken = options.getAccessToken
     } else if (options.auth && typeof options.auth === 'object') {
       this._getAccessToken = createRefreshTokenAccessTokenProvider({
         axios: this._axios,
@@ -115,51 +115,51 @@ class M365GraphBatchClient {
         scope: options.auth.scope,
         now: this._now,
         clockSkewMs: options.auth.clockSkewMs,
-      });
+      })
     } else {
-      throw new Error('options.getAccessToken is required');
+      throw new Error('options.getAccessToken is required')
     }
 
-    this._graphBaseUrl = options.graphBaseUrl || 'https://graph.microsoft.com/v1.0';
-    this._batchPath = options.batchPath || '/$batch';
+    this._graphBaseUrl = options.graphBaseUrl || 'https://graph.microsoft.com/v1.0'
+    this._batchPath = options.batchPath || '/$batch'
 
-    this._graphOrigin = null;
+    this._graphOrigin = null
     try {
-      this._graphOrigin = new URL(this._graphBaseUrl).origin;
+      this._graphOrigin = new URL(this._graphBaseUrl).origin
     } catch {
       // ignore
     }
 
-    this._maxSubrequestRetries = options.maxSubrequestRetries ?? 5;
-    this._maxBatchRetries = options.maxBatchRetries ?? 5;
+    this._maxSubrequestRetries = options.maxSubrequestRetries ?? 5
+    this._maxBatchRetries = options.maxBatchRetries ?? 5
 
-    this._maxRequestsPerBatch = options.maxRequestsPerBatch ?? 20;
-    this._initialBackoffMs = options.initialBackoffMs ?? 250;
-    this._maxBackoffMs = options.maxBackoffMs ?? 30_000;
+    this._maxRequestsPerBatch = options.maxRequestsPerBatch ?? 20
+    this._initialBackoffMs = options.initialBackoffMs ?? 250
+    this._maxBackoffMs = options.maxBackoffMs ?? 30_000
 
-    this._maxPaginationPages = options.maxPaginationPages ?? 50;
+    this._maxPaginationPages = options.maxPaginationPages ?? 50
 
     // Jitter is applied to exponential backoff to reduce thundering herd.
-    this._jitterRatio = options.jitterRatio ?? 0.25;
+    this._jitterRatio = options.jitterRatio ?? 0.25
 
     // Allow deterministic tests.
-    this._rng = options.rng;
+    this._rng = options.rng
 
     // Default: common transient statuses for Graph.
-    this._retryableStatuses = new Set(options.retryableStatuses ?? [429, 500, 502, 503, 504]);
+    this._retryableStatuses = new Set(options.retryableStatuses ?? [429, 500, 502, 503, 504])
 
     this._backoff = createBackoff({
       initialBackoffMs: this._initialBackoffMs,
       maxBackoffMs: this._maxBackoffMs,
       jitterRatio: this._jitterRatio,
       rng: this._rng,
-    });
+    })
 
     this._pagination = createPaginationHandler({
       getWithGlobalRetry: (url) => this._getWithGlobalRetry(url),
       graphOrigin: this._graphOrigin,
       maxPaginationPages: this._maxPaginationPages,
-    });
+    })
   }
 
   /**
@@ -185,68 +185,67 @@ class M365GraphBatchClient {
    * @returns {Promise<BatchResultStrict|BatchResultPartial>}
    */
   async batch(requests, options = {}) {
+    if (!Array.isArray(requests)) throw new Error('requests must be an array')
+    if (requests.length === 0) return { responses: {}, responseList: [] }
 
-    if (!Array.isArray(requests)) throw new Error('requests must be an array');
-    if (requests.length === 0) return { responses: {}, responseList: [] };
+    const paginate = options.paginate ?? true
+    const mode = options.mode ?? 'partial'
 
-    const paginate = options.paginate ?? true;
-    const mode = options.mode ?? 'partial';
+    const responsesById = {}
+    const responseList = []
 
-    const responsesById = {};
-    const responseList = [];
+    const errors = []
+    let partial = false
 
-    const errors = [];
-    let partial = false;
-
-    const requestChunks = chunkArray(requests, this._maxRequestsPerBatch);
+    const requestChunks = chunkArray(requests, this._maxRequestsPerBatch)
     for (const requestChunk of requestChunks) {
-      const chunkResult = await this._executeChunkWithRetries(requestChunk, { paginate, mode });
+      const chunkResult = await this._executeChunkWithRetries(requestChunk, { paginate, mode })
       for (const response of chunkResult.responseList) {
-        responsesById[response.id] = response;
-        responseList.push(response);
+        responsesById[response.id] = response
+        responseList.push(response)
       }
 
       if (mode === 'partial') {
-        partial = partial || chunkResult.partial;
-        errors.push(...chunkResult.errors);
+        partial = partial || chunkResult.partial
+        errors.push(...chunkResult.errors)
       }
     }
 
-    if (mode === 'partial') return { responses: responsesById, responseList, partial, errors };
+    if (mode === 'partial') return { responses: responsesById, responseList, partial, errors }
 
-    return { responses: responsesById, responseList };
+    return { responses: responsesById, responseList }
   }
 
   _isRetryableStatus(status) {
-    return this._retryableStatuses.has(status);
+    return this._retryableStatuses.has(status)
   }
 
   _computeBackoffMs(attempt) {
-    return this._backoff.computeBackoffMs(attempt);
+    return this._backoff.computeBackoffMs(attempt)
   }
 
   async _executeChunkWithRetries(requestChunk, { paginate, mode }) {
-    const requestMetaById = {};
+    const requestMetaById = {}
     for (const req of requestChunk) {
       requestMetaById[String(req.id)] = {
         method: (req.method || 'GET').toUpperCase(),
-      };
+      }
     }
 
-    const errors = [];
-    let partial = false;
+    const errors = []
+    let partial = false
 
-    const responsesById = {};
+    const responsesById = {}
 
     const classifyGlobalErrorStage = (err) => {
-      const msg = typeof err?.message === 'string' ? err.message : '';
-      const url = typeof err?.config?.url === 'string' ? err.config.url : '';
+      const msg = typeof err?.message === 'string' ? err.message : ''
+      const url = typeof err?.config?.url === 'string' ? err.config.url : ''
 
-      if (url.includes('login.microsoftonline.com') || msg.includes('login.microsoftonline.com')) return 'auth';
-      if (msg.startsWith('OAuth token refresh')) return 'auth';
+      if (url.includes('login.microsoftonline.com') || msg.includes('login.microsoftonline.com')) return 'auth'
+      if (msg.startsWith('OAuth token refresh')) return 'auth'
 
-      return 'batch';
-    };
+      return 'batch'
+    }
 
     const formatGlobalError = (err, stage) => ({
       stage,
@@ -257,16 +256,16 @@ class M365GraphBatchClient {
       syscall: err?.syscall,
       hostname: err?.hostname,
       url: err?.config?.url,
-    });
+    })
 
     const isOfflineLikeError = (err) => {
-      const msg = typeof err?.message === 'string' ? err.message : '';
-      const code = err?.code;
-      const syscall = err?.syscall;
+      const msg = typeof err?.message === 'string' ? err.message : ''
+      const code = err?.code
+      const syscall = err?.syscall
 
       // Node DNS lookup failure
-      if (syscall === 'getaddrinfo') return true;
-      if (msg.includes('getaddrinfo ENOTFOUND')) return true;
+      if (syscall === 'getaddrinfo') return true
+      if (msg.includes('getaddrinfo ENOTFOUND')) return true
 
       return [
         'ENOTFOUND',
@@ -276,14 +275,12 @@ class M365GraphBatchClient {
         'ECONNRESET',
         'ENETUNREACH',
         'EHOSTUNREACH',
-      ].includes(code);
-    };
-
-
+      ].includes(code)
+    }
 
     const ensureSyntheticBatchFailureResponses = (stage, message) => {
       for (const req of requestChunk) {
-        if (responsesById[req.id]) continue;
+        if (responsesById[req.id]) continue
         responsesById[req.id] = {
           id: String(req.id),
           status: 599,
@@ -295,48 +292,45 @@ class M365GraphBatchClient {
             },
             stage,
           },
-        };
+        }
       }
-    };
+    }
 
     // First, execute the whole chunk once. Then, isolate retryable subresponses.
-    let initial;
+    let initial
     try {
-      initial = await this._postBatchWithGlobalRetry(requestChunk);
+      initial = await this._postBatchWithGlobalRetry(requestChunk)
     } catch (err) {
       // In partial mode, only swallow offline/network failures.
       // Other failures (401, invalid $batch shape, invalid_grant, etc.) still throw.
-      if (mode !== 'partial' || !isOfflineLikeError(err)) throw err;
+      if (mode !== 'partial' || !isOfflineLikeError(err)) throw err
 
-      const stage = classifyGlobalErrorStage(err);
-      partial = true;
-      errors.push(formatGlobalError(err, stage));
-      ensureSyntheticBatchFailureResponses(stage, errors[errors.length - 1].message);
+      const stage = classifyGlobalErrorStage(err)
+      partial = true
+      errors.push(formatGlobalError(err, stage))
+      ensureSyntheticBatchFailureResponses(stage, errors[errors.length - 1].message)
 
+      const ordered = requestChunk.map((r) => responsesById[r.id]).filter(Boolean)
 
-      const ordered = requestChunk
-        .map((r) => responsesById[r.id])
-        .filter(Boolean);
-
-      return { responsesById, responseList: ordered, partial, errors };
+      return { responsesById, responseList: ordered, partial, errors }
     }
 
     for (const r of initial.responses) {
-      responsesById[r.id] = r;
+      responsesById[r.id] = r
     }
 
-    const retryState = new Map();
-    const getAttempts = (id) => retryState.get(id) ?? 0;
-    const incAttempts = (id) => retryState.set(id, getAttempts(id) + 1);
+    const retryState = new Map()
+    const getAttempts = (id) => retryState.get(id) ?? 0
+    const incAttempts = (id) => retryState.set(id, getAttempts(id) + 1)
 
-    let pending = requestChunk.slice();
+    let pending = requestChunk.slice()
     // Apply initial results.
     pending = pending.filter((req) => {
-      const response = responsesById[req.id];
+      const response = responsesById[req.id]
       // Missing response should be treated as retryable (defensive).
-      if (!response) return true;
-      return this._isRetryableStatus(response.status);
-    });
+      if (!response) return true
+      return this._isRetryableStatus(response.status)
+    })
 
     const ensureSyntheticResponse = (id, status, message) => {
       responsesById[id] = {
@@ -350,124 +344,122 @@ class M365GraphBatchClient {
           },
           status,
         },
-      };
-    };
+      }
+    }
 
     // If any retryable subresponses exist, retry only those.
     while (pending.length > 0) {
-      const exhausted = [];
-      const retryList = [];
+      const exhausted = []
+      const retryList = []
       for (const req of pending) {
-        const nextAttempts = getAttempts(req.id) + 1;
+        const nextAttempts = getAttempts(req.id) + 1
         if (nextAttempts > this._maxSubrequestRetries) {
-          exhausted.push(req);
+          exhausted.push(req)
         } else {
-          retryList.push(req);
+          retryList.push(req)
         }
       }
 
       if (exhausted.length > 0) {
         if (mode !== 'partial') {
-          const req = exhausted[0];
-          const lastResponse = responsesById[req.id];
-          const status = lastResponse ? lastResponse.status : 'unknown';
-          throw new SubrequestExceededRetriesError({ id: req.id, status });
+          const req = exhausted[0]
+          const lastResponse = responsesById[req.id]
+          const status = lastResponse ? lastResponse.status : 'unknown'
+          throw new SubrequestExceededRetriesError({ id: req.id, status })
         }
 
-        partial = true;
+        partial = true
         for (const req of exhausted) {
-          const lastResponse = responsesById[req.id];
-          const status = lastResponse ? lastResponse.status : 'unknown';
-          const err = new SubrequestExceededRetriesError({ id: req.id, status });
+          const lastResponse = responsesById[req.id]
+          const status = lastResponse ? lastResponse.status : 'unknown'
+          const err = new SubrequestExceededRetriesError({ id: req.id, status })
           errors.push({
             id: String(req.id),
             stage: 'subrequest',
             type: err.name,
             message: err.message,
             status,
-          });
+          })
 
-          if (!lastResponse) ensureSyntheticResponse(req.id, status, err.message);
+          if (!lastResponse) ensureSyntheticResponse(req.id, status, err.message)
         }
       }
 
-      if (retryList.length === 0) break;
+      if (retryList.length === 0) break
 
       // Calculate delay: prefer per-subrequest Retry-After.
-      let delayMs = null;
+      let delayMs = null
       for (const req of retryList) {
-        const response = responsesById[req.id];
-        const ra = response ? getRetryAfterMs(response.headers, this._now) : null;
-        if (ra !== null) delayMs = delayMs === null ? ra : Math.max(delayMs, ra);
+        const response = responsesById[req.id]
+        const ra = response ? getRetryAfterMs(response.headers, this._now) : null
+        if (ra !== null) delayMs = delayMs === null ? ra : Math.max(delayMs, ra)
       }
 
       // If no Retry-After headers, do exponential backoff based on max attempts.
       if (delayMs === null) {
-        const maxAttempts = Math.max(0, ...retryList.map((r) => getAttempts(r.id)));
-        delayMs = this._computeBackoffMs(maxAttempts + 1);
+        const maxAttempts = Math.max(0, ...retryList.map((r) => getAttempts(r.id)))
+        delayMs = this._computeBackoffMs(maxAttempts + 1)
       }
 
-      if (delayMs > 0) await this._sleep(delayMs);
+      if (delayMs > 0) await this._sleep(delayMs)
 
       for (const req of retryList) {
-        incAttempts(req.id);
+        incAttempts(req.id)
       }
 
-      const retryBatch = await this._postBatchWithGlobalRetry(retryList);
+      const retryBatch = await this._postBatchWithGlobalRetry(retryList)
       for (const r of retryBatch.responses) {
-        responsesById[r.id] = r;
+        responsesById[r.id] = r
       }
 
       pending = retryList.filter((req) => {
-        const resp = responsesById[req.id];
-        if (!resp) return true;
-        return this._isRetryableStatus(resp.status);
-      });
+        const resp = responsesById[req.id]
+        if (!resp) return true
+        return this._isRetryableStatus(resp.status)
+      })
     }
 
-    const responseList = Object.values(responsesById);
+    const responseList = Object.values(responsesById)
 
     if (paginate) {
       await this._paginateResponsesInPlace(responseList, requestMetaById, {
         mode,
         onError: (err, ctx) => {
-          partial = true;
+          partial = true
           errors.push({
             id: String(ctx.id),
             stage: 'pagination',
             type: err.name,
             message: err.message,
-          });
+          })
         },
-      });
+      })
     }
 
     // Preserve stable order of the original requestChunk.
-    const ordered = requestChunk
-      .map((r) => responsesById[r.id])
-      .filter(Boolean);
+    const ordered = requestChunk.map((r) => responsesById[r.id]).filter(Boolean)
 
-    if (mode === 'partial') return { responsesById, responseList: ordered, partial, errors };
+    if (mode === 'partial') return { responsesById, responseList: ordered, partial, errors }
 
-    return { responsesById, responseList: ordered };
+    return { responsesById, responseList: ordered }
   }
 
   async _paginateResponsesInPlace(responseList, requestMetaById, options) {
-    return this._pagination.paginateResponsesInPlace(responseList, requestMetaById, options);
+    return this._pagination.paginateResponsesInPlace(responseList, requestMetaById, options)
   }
 
   async _getWithGlobalRetry(urlOrPath) {
-    return this._requestWithGlobalRetry({ method: 'GET', url: urlOrPath });
+    return this._requestWithGlobalRetry({ method: 'GET', url: urlOrPath })
   }
 
   async _requestWithGlobalRetry({ method, url, headers, body }) {
-    let attempt = 0;
+    let attempt = 0
 
     while (true) {
-      const token = await this._getAccessToken();
-      const fullUrl = this._toFullUrl(url);
+      const token = await this._getAccessToken()
+      const fullUrl = this._toFullUrl(url)
 
-      let response;
+      let response
       try {
         response = await this._axios.request({
           url: fullUrl,
@@ -480,42 +472,42 @@ class M365GraphBatchClient {
           data: body,
           // We do retry handling ourselves.
           validateStatus: () => true,
-        });
+        })
       } catch (err) {
-        attempt += 1;
-        if (attempt > this._maxBatchRetries) throw err;
-        const backoffMs = this._computeBackoffMs(attempt);
-        if (backoffMs > 0) await this._sleep(backoffMs);
-        continue;
+        attempt += 1
+        if (attempt > this._maxBatchRetries) throw err
+        const backoffMs = this._computeBackoffMs(attempt)
+        if (backoffMs > 0) await this._sleep(backoffMs)
+        continue
       }
 
-      const status = response.status;
-      const responseHeaders = normalizeHeaders(response.headers);
+      const status = response.status
+      const responseHeaders = normalizeHeaders(response.headers)
 
       if (status >= 200 && status < 300) {
-        return response.data ?? null;
+        return response.data ?? null
       }
 
       if (!this._isRetryableStatus(status)) {
-        const responseText = typeof response.data === 'string' ? response.data : JSON.stringify(response.data ?? '');
-        throw new RequestFailedError({ status, responseText });
+        const responseText = typeof response.data === 'string' ? response.data : JSON.stringify(response.data ?? '')
+        throw new RequestFailedError({ status, responseText })
       }
 
-      attempt += 1;
+      attempt += 1
       if (attempt > this._maxBatchRetries) {
-        throw new RequestExceededRetriesError({ status });
+        throw new RequestExceededRetriesError({ status })
       }
 
-      const retryAfterMs = getRetryAfterMs(responseHeaders, this._now);
-      const backoffMs = this._computeBackoffMs(attempt);
-      const delayMs = retryAfterMs ?? backoffMs;
-      if (delayMs > 0) await this._sleep(delayMs);
+      const retryAfterMs = getRetryAfterMs(responseHeaders, this._now)
+      const backoffMs = this._computeBackoffMs(attempt)
+      const delayMs = retryAfterMs ?? backoffMs
+      if (delayMs > 0) await this._sleep(delayMs)
     }
   }
 
   async _postBatchWithGlobalRetry(requestChunk) {
     if (requestChunk.length > this._maxRequestsPerBatch) {
-      throw new BatchRequestSizeExceededError({ max: this._maxRequestsPerBatch });
+      throw new BatchRequestSizeExceededError({ max: this._maxRequestsPerBatch })
     }
 
     const payload = {
@@ -526,16 +518,16 @@ class M365GraphBatchClient {
         headers: r.headers || undefined,
         body: r.body || undefined,
       })),
-    };
+    }
 
     const result = await this._requestWithGlobalRetry({
       method: 'POST',
       url: this._batchPath,
       body: payload,
-    });
+    })
 
     if (!result || !Array.isArray(result.responses)) {
-      throw new InvalidBatchResponseShapeError();
+      throw new InvalidBatchResponseShapeError()
     }
 
     // Normalize headers for downstream Retry-After parsing.
@@ -544,13 +536,13 @@ class M365GraphBatchClient {
       status: r.status,
       headers: normalizeHeaders(r.headers),
       body: r.body,
-    }));
+    }))
 
-    return { responses };
+    return { responses }
   }
 
   _toFullUrl(urlOrPath) {
-    return toFullUrl({ graphBaseUrl: this._graphBaseUrl, urlOrPath });
+    return toFullUrl({ graphBaseUrl: this._graphBaseUrl, urlOrPath })
   }
 }
 
@@ -559,4 +551,4 @@ module.exports = {
   getRetryAfterMs,
   normalizeHeaders,
   toRelativeBatchUrl,
-};
+}
