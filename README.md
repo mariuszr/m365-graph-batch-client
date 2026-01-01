@@ -12,8 +12,26 @@ retries with backoff, best-effort partial results, and optional auto-pagination.
 
 ## Install
 
+### npm
+
+Not published to npm yet (planned once the API stabilizes).
+
+### GitHub
+
 ```bash
-npm i m365-graph-batch-client
+npm i github:mariuszr/m365-graph-batch-client
+```
+
+Alternative (explicit git URL):
+
+```bash
+npm i git+https://github.com/mariuszr/m365-graph-batch-client.git
+```
+
+Tip: for reproducible installs, pin a tag/commit:
+
+```bash
+npm i github:mariuszr/m365-graph-batch-client#<tag-or-commit>
 ```
 
 ## Motivation
@@ -147,6 +165,8 @@ const client = new M365GraphBatchClient({
 `responses` is a map keyed by request `id`, each entry looks like:
 `{ id, status, headers, body }`.
 
+Note: JavaScript object keys are strings, so numeric ids are stringified in the `responses` map (e.g. use `responses['1']`).
+
 `errors` items include `stage` (`subrequest`, `pagination`, `auth`, `batch`) with a human-readable `message`.
 
 ## FAQ
@@ -165,6 +185,8 @@ and you can decide what to do with the failures.
 
 In `mode: 'partial'`, offline/network-like failures during token acquisition or the `$batch` call
 are represented as synthetic `599` subresponses so you still get a complete `responses` map.
+
+`599` is not returned by Microsoft Graph. It's a synthetic status used here to represent "no HTTP response" situations (DNS, timeouts, connection errors, etc.).
 
 ## Codecov setup
 
