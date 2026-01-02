@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from 'vitest'
 
 import { createPaginationHandler } from '../internal/pagination'
 import { createRefreshTokenAccessTokenProvider } from '../internal/tokenProvider'
-import { chunkArray, toFullUrl, normalizeHeaders, getRetryAfterMs, toRelativeBatchUrl } from '../internal/utils'
+import { chunkArray, getRetryAfterMs, normalizeHeaders, toFullUrl, toRelativeBatchUrl } from '../internal/utils'
 
 describe('coverage edges', () => {
   test('security: never leak authorization header in errors', async () => {

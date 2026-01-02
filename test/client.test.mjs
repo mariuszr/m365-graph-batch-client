@@ -219,8 +219,8 @@ describe('m365GraphBatchClient', () => {
     const saved = require.cache[axiosPath]
     delete require.cache[axiosPath]
 
-    const originalLoad = require('module')._load
-    require('module')._load = (request, parent, isMain) => {
+    const originalLoad = require('node:module')._load
+    require('node:module')._load = (request, parent, isMain) => {
       if (request === 'axios') {
         const err = new Error('not found')
         err.code = 'MODULE_NOT_FOUND'
@@ -233,7 +233,7 @@ describe('m365GraphBatchClient', () => {
       const { M365GraphBatchClient: C } = require('../client.js')
       expect(() => new C({ getAccessToken: async () => 't' })).toThrow(/axios dependency not found/i)
     } finally {
-      require('module')._load = originalLoad
+      require('node:module')._load = originalLoad
       require.cache[axiosPath] = saved
     }
   })
@@ -655,7 +655,7 @@ describe('m365GraphBatchClient', () => {
   })
 
   test('constructor throws when axios dependency is missing', async () => {
-    const Module = await import('module')
+    const Module = await import('node:module')
 
     const originalLoad = Module.default._load
     try {
