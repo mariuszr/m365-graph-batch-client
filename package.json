@@ -12,8 +12,9 @@
   "description": "Resilient Microsoft Graph batch executor for Node.js (retry/backoff, partial results, auto-pagination)",
   "main": "index.js",
   "scripts": {
-    "test": "jest --config jest.config.cjs",
-    "coverage": "jest --coverage --config jest.config.cjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage",
     "lint": "biome lint .",
     "lint:fix": "biome lint . --write",
     "format": "biome format . --write",
@@ -26,7 +27,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.10",
-    "jest": "^29.7.0"
+    "@vitest/coverage-v8": "^4.0.16",
+    "vitest": "^4.0.16"
   },
   "engines": {
     "node": ">=18"

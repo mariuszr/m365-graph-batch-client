@@ -56,6 +56,15 @@ class PaginationNonJsonError extends M365GraphBatchClientError {
   }
 }
 
+class PaginationExternalNextLinkError extends M365GraphBatchClientError {
+  constructor({ id, nextLink, allowedOrigin }) {
+    super(`Pagination nextLink origin mismatch for ${id} (allowed ${allowedOrigin}): ${nextLink}`)
+    this.id = id
+    this.nextLink = nextLink
+    this.allowedOrigin = allowedOrigin
+  }
+}
+
 module.exports = {
   M365GraphBatchClientError,
   RequestFailedError,
@@ -65,4 +74,5 @@ module.exports = {
   BatchRequestSizeExceededError,
   PaginationExceededMaxPagesError,
   PaginationNonJsonError,
+  PaginationExternalNextLinkError,
 }

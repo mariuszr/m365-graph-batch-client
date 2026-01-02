@@ -42,12 +42,14 @@ This library wraps those concerns so your application code can stay simple.
 
 ## Features
 
-- Automatic chunking to Graph’s 20 subrequest limit
+- Automatic chunking to Graphs 20 subrequest limit
 - Retries for common transient statuses (429/5xx) with exponential backoff + jitter
 - Honors `Retry-After` when present
 - `mode: 'partial'` (default) returns as much as possible + an `errors[]` list
 - `mode: 'strict'` throws on failures
 - Optional auto-pagination for successful `GET` responses
+- SSRF protections: blocks off-origin absolute subrequest URLs and external `@odata.nextLink`
+
 
 ## Non-goals
 
@@ -157,6 +159,16 @@ const client = new M365GraphBatchClient({
 - `options.mode`: `partial` (default) or `strict`.
 - `options.paginate`: `true` (default) will auto-follow `@odata.nextLink` for successful `GET` responses.
 
+#### URL safety (SSRF)
+
+- Subrequest `url` should normally be a Graph-relative path like `/users`.
+- If you pass an absolute URL, it must have the same origin as `graphBaseUrl`.
+  - In `mode: 'strict'`: the call throws.
+  - In `mode: 'partial'`: that subrequest becomes a synthetic `599` response and an entry is appended to `errors[]`.
+- For pagination, external `@odata.nextLink` is treated similarly:
+  - In `mode: 'strict'`: the call throws.
+  - In `mode: 'partial'`: paging stops, `@odata.nextLink` is preserved, and an error is appended to `errors[]`.
+
 #### Return value
 
 - In `partial` mode (default): `{ responses, responseList, partial, errors }`.
@@ -167,7 +179,11 @@ const client = new M365GraphBatchClient({
 
 Note: JavaScript object keys are strings, so numeric ids are stringified in the `responses` map (e.g. use `responses['1']`).
 
-`errors` items include `stage` (`subrequest`, `pagination`, `auth`, `batch`) with a human-readable `message`.
+`errors` items include:
+
+- `stage`: `subrequest`, `pagination`, `auth`, or `batch`
+- `message`: human-readable error message
+- Optional fields like `id`, `code`, `status`, `url`, `errno`, `syscall`, `hostname`
 
 ## FAQ
 
@@ -183,10 +199,12 @@ and you can decide what to do with the failures.
 
 ### What is HTTP status `599`?
 
-In `mode: 'partial'`, offline/network-like failures during token acquisition or the `$batch` call
-are represented as synthetic `599` subresponses so you still get a complete `responses` map.
+In `mode: 'partial'`, some failures are represented as synthetic `599` subresponses so you still get a complete `responses` map:
 
-`599` is not returned by Microsoft Graph. It's a synthetic status used here to represent "no HTTP response" situations (DNS, timeouts, connection errors, etc.).
+- Offline/network-like failures during token acquisition or during the `$batch` call itself.
+- Off-origin absolute subrequest URLs (SSRF protection) are also represented as `599` for that specific subrequest.
+
+`599` is not returned by Microsoft Graph. It's a synthetic status used here to represent "no HTTP response" situations (DNS, timeouts, connection errors, etc.) and some preflight validation failures.
 
 ## Codecov setup
 

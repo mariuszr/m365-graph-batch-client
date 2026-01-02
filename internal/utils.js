@@ -37,28 +37,56 @@ function chunkArray(arr, size) {
   return chunks
 }
 
+function isAbsoluteUrl(value) {
+  // Deterministic absolute URL check:
+  // - requires a scheme (RFC 3986) using the "scheme://" form
+  // - avoids Node's `new URL('/path')` behavior (treated as "null:" URL)
+  return /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(String(value))
+}
+
 function toRelativeBatchUrl(urlOrPath) {
   if (!urlOrPath) throw new Error('Request url is required')
 
+  const str = String(urlOrPath)
+
   // Graph batch requires relative urls. If user passes absolute, strip origin.
-  try {
-    const maybeUrl = new URL(urlOrPath)
+  if (isAbsoluteUrl(str)) {
+    const maybeUrl = new URL(str)
     return `${maybeUrl.pathname}${maybeUrl.search}`
-  } catch {
-    if (String(urlOrPath).startsWith('/')) return String(urlOrPath)
-    return `/${String(urlOrPath)}`
   }
+
+  if (str.startsWith('/')) return str
+  return `/${str}`
 }
 
 function toFullUrl({ graphBaseUrl, urlOrPath }) {
-  // If absolute, keep it.
+  // If main base URL is invalid, preserve previous behavior.
+  let graphOrigin = null
   try {
-    return new URL(urlOrPath).toString()
+    graphOrigin = new URL(graphBaseUrl).origin
   } catch {
-    const base = graphBaseUrl.replace(/\/$/, '')
-    const path = String(urlOrPath).startsWith('/') ? String(urlOrPath) : `/${String(urlOrPath)}`
-    return `${base}${path}`
+    graphOrigin = null
   }
+
+  const input = String(urlOrPath)
+
+  // If absolute, enforce same-origin to avoid SSRF.
+  if (isAbsoluteUrl(input)) {
+    const absolute = new URL(input)
+
+    const originMatches = !graphOrigin || absolute.origin === graphOrigin
+    if (!originMatches) {
+      const err = new Error(`Request url origin mismatch (allowed ${graphOrigin}): ${absolute.toString()}`)
+      err.code = 'ORIGIN_MISMATCH'
+      throw err
+    }
+
+    return absolute.toString()
+  }
+
+  const base = String(graphBaseUrl).replace(/\/$/, '')
+  const path = input.startsWith('/') ? input : `/${input}`
+  return `${base}${path}`
 }
 
 module.exports = {

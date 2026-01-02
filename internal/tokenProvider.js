@@ -5,16 +5,18 @@ function createRefreshTokenAccessTokenProvider({
   clientSecret,
   refreshToken,
   scope,
-  now = () => Date.now(),
-  clockSkewMs = 30_000,
+  now,
+  clockSkewMs,
 }) {
+  const effectiveNow = typeof now === 'function' ? now : () => Date.now()
+  const effectiveClockSkewMs = Number.isFinite(clockSkewMs) ? clockSkewMs : 30_000
   if (!axios || typeof axios.request !== 'function') throw new Error('options.axios.request is required')
   if (!tenantId) throw new Error('options.auth.tenantId is required')
   if (!clientId) throw new Error('options.auth.clientId is required')
   if (!clientSecret) throw new Error('options.auth.clientSecret is required')
   if (!refreshToken) throw new Error('options.auth.refreshToken is required')
 
-  const effectiveScope = scope || 'https://graph.microsoft.com/.default offline_access'
+  const effectiveScope = scope ?? 'https://graph.microsoft.com/.default offline_access'
 
   let cachedToken = null
   let cachedTokenExpiresAtMs = 0
@@ -52,15 +54,15 @@ function createRefreshTokenAccessTokenProvider({
     if (!Number.isFinite(expiresInSeconds)) throw new Error('OAuth token refresh returned invalid expires_in')
 
     cachedToken = token
-    cachedTokenExpiresAtMs = now() + Math.max(0, expiresInSeconds * 1000)
+    cachedTokenExpiresAtMs = effectiveNow() + Math.max(0, expiresInSeconds * 1000)
 
     return cachedToken
   }
 
   return async function getAccessToken() {
-    const timeNow = now()
+    const timeNow = effectiveNow()
 
-    if (cachedToken && cachedTokenExpiresAtMs - clockSkewMs > timeNow) {
+    if (cachedToken && cachedTokenExpiresAtMs - effectiveClockSkewMs > timeNow) {
       return cachedToken
     }
 

@@ -160,6 +160,21 @@ class M365GraphBatchClient {
       graphOrigin: this._graphOrigin,
       maxPaginationPages: this._maxPaginationPages,
     })
+
+    this._validateUrlSameOrigin = (urlOrPath) => {
+      if (!this._graphOrigin) return
+      try {
+        const abs = new URL(String(urlOrPath))
+        if (abs.origin !== this._graphOrigin) {
+          const err = new Error(`Request url origin mismatch (allowed ${this._graphOrigin}): ${abs.toString()}`)
+          err.code = 'ORIGIN_MISMATCH'
+          throw err
+        }
+      } catch (err) {
+        if (err?.code === 'ORIGIN_MISMATCH') throw err
+        // not an absolute URL
+      }
+    }
   }
 
   /**
@@ -227,9 +242,9 @@ class M365GraphBatchClient {
   async _executeChunkWithRetries(requestChunk, { paginate, mode }) {
     const requestMetaById = {}
     for (const req of requestChunk) {
-      requestMetaById[String(req.id)] = {
-        method: (req.method || 'GET').toUpperCase(),
-      }
+      const id = String(req.id)
+      const method = (req.method || 'GET').toUpperCase()
+      requestMetaById[id] = { method }
     }
 
     const errors = []
@@ -296,10 +311,67 @@ class M365GraphBatchClient {
       }
     }
 
+    const ensureSyntheticSubrequestFailureResponse = (id, errorCode, message, status) => {
+      responsesById[id] = {
+        id: String(id),
+        status: 599,
+        headers: {},
+        body: {
+          error: {
+            code: errorCode,
+            message,
+          },
+          status,
+        },
+      }
+    }
+
+    // Preflight: if any subrequest has an off-origin absolute URL, treat it as a partial subrequest error.
+    const offOrigin = []
+    if (this._graphOrigin) {
+      for (const req of requestChunk) {
+        try {
+          this._validateUrlSameOrigin(req.url)
+        } catch (err) {
+          if (err?.code === 'ORIGIN_MISMATCH') offOrigin.push(req)
+          else throw err
+        }
+      }
+    }
+
+    let effectiveChunk = requestChunk
+
+    if (offOrigin.length > 0) {
+      const message = `Request url origin mismatch (allowed ${this._graphOrigin}): ${offOrigin[0].url}`
+      if (mode !== 'partial') throw new Error(message)
+
+      partial = true
+      for (const req of offOrigin) {
+        ensureSyntheticSubrequestFailureResponse(req.id, 'ORIGIN_MISMATCH', message, 599)
+        errors.push({
+          id: String(req.id),
+          stage: 'subrequest',
+          type: 'OriginMismatchError',
+          message,
+          code: 'ORIGIN_MISMATCH',
+          url: String(req.url),
+        })
+      }
+
+      effectiveChunk = requestChunk.filter((r) => !offOrigin.some((e) => String(e.id) === String(r.id)))
+    }
+
     // First, execute the whole chunk once. Then, isolate retryable subresponses.
     let initial
+    if (effectiveChunk.length === 0) {
+      const ordered = requestChunk.map((r) => responsesById[r.id]).filter(Boolean)
+      return mode === 'partial'
+        ? { responsesById, responseList: ordered, partial, errors }
+        : { responsesById, responseList: ordered }
+    }
+
     try {
-      initial = await this._postBatchWithGlobalRetry(requestChunk)
+      initial = await this._postBatchWithGlobalRetry(effectiveChunk)
     } catch (err) {
       // In partial mode, only swallow offline/network failures.
       // Other failures (401, invalid $batch shape, invalid_grant, etc.) still throw.
@@ -323,7 +395,7 @@ class M365GraphBatchClient {
     const getAttempts = (id) => retryState.get(id) ?? 0
     const incAttempts = (id) => retryState.set(id, getAttempts(id) + 1)
 
-    let pending = requestChunk.slice()
+    let pending = effectiveChunk.slice()
     // Apply initial results.
     pending = pending.filter((req) => {
       const response = responsesById[req.id]
@@ -331,21 +403,6 @@ class M365GraphBatchClient {
       if (!response) return true
       return this._isRetryableStatus(response.status)
     })
-
-    const ensureSyntheticResponse = (id, status, message) => {
-      responsesById[id] = {
-        id: String(id),
-        status: 599,
-        headers: {},
-        body: {
-          error: {
-            code: 'SubrequestExceededRetries',
-            message,
-          },
-          status,
-        },
-      }
-    }
 
     // If any retryable subresponses exist, retry only those.
     while (pending.length > 0) {
@@ -381,7 +438,8 @@ class M365GraphBatchClient {
             status,
           })
 
-          if (!lastResponse) ensureSyntheticResponse(req.id, status, err.message)
+          if (!lastResponse)
+            ensureSyntheticSubrequestFailureResponse(req.id, 'SubrequestExceededRetries', err.message, status)
         }
       }
 
@@ -449,10 +507,13 @@ class M365GraphBatchClient {
   }
 
   async _getWithGlobalRetry(urlOrPath) {
-    return this._requestWithGlobalRetry({ method: 'GET', url: urlOrPath })
+    const req = { method: 'GET', url: urlOrPath }
+    return this._requestWithGlobalRetry(req)
   }
 
   async _requestWithGlobalRetry({ method, url, headers, body }) {
+    this._validateUrlSameOrigin(url)
+
     let attempt = 0
 
     while (true) {
@@ -506,6 +567,17 @@ class M365GraphBatchClient {
   }
 
   async _postBatchWithGlobalRetry(requestChunk) {
+    for (const req of requestChunk) {
+      try {
+        this._validateUrlSameOrigin(req.url)
+      } catch (err) {
+        if (err?.code === 'ORIGIN_MISMATCH') {
+          err.stage = 'subrequest'
+        }
+        throw err
+      }
+    }
+
     if (requestChunk.length > this._maxRequestsPerBatch) {
       throw new BatchRequestSizeExceededError({ max: this._maxRequestsPerBatch })
     }
@@ -531,18 +603,21 @@ class M365GraphBatchClient {
     }
 
     // Normalize headers for downstream Retry-After parsing.
-    const responses = result.responses.map((r) => ({
-      id: String(r.id),
-      status: r.status,
-      headers: normalizeHeaders(r.headers),
-      body: r.body,
-    }))
+    const responses = result.responses.map((r) => {
+      const id = String(r.id)
+      const status = r.status
+      const headers = normalizeHeaders(r.headers)
+      const body = r.body
+      return { id, status, headers, body }
+    })
 
-    return { responses }
+    const out = { responses }
+    return out
   }
 
   _toFullUrl(urlOrPath) {
-    return toFullUrl({ graphBaseUrl: this._graphBaseUrl, urlOrPath })
+    const args = { graphBaseUrl: this._graphBaseUrl, urlOrPath }
+    return toFullUrl(args)
   }
 }
 

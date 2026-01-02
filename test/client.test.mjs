@@ -1,6 +1,8 @@
-const { M365GraphBatchClient, getRetryAfterMs, normalizeHeaders, toRelativeBatchUrl } = require('..')
-const { createPaginationHandler } = require('../internal/pagination')
-const { createRefreshTokenAccessTokenProvider } = require('../internal/tokenProvider')
+import { describe, expect, test, vi } from 'vitest'
+
+import { getRetryAfterMs, M365GraphBatchClient, normalizeHeaders, toRelativeBatchUrl } from '..'
+import { createPaginationHandler } from '../internal/pagination'
+import { createRefreshTokenAccessTokenProvider } from '../internal/tokenProvider'
 
 function createAxiosResponse({ status = 200, data, headers = {} }) {
   const normalizedHeaders = {}
@@ -53,6 +55,10 @@ describe('m365GraphBatchClient', () => {
     expect(toRelativeBatchUrl('users')).toBe('/users')
   })
 
+  test('toRelativeBatchUrl keeps querystring when absolute url contains search', () => {
+    expect(toRelativeBatchUrl('https://graph.microsoft.com/v1.0/users?x=1&y=2')).toBe('/v1.0/users?x=1&y=2')
+  })
+
   test('getRetryAfterMs supports delta-seconds and HTTP-date', () => {
     expect(getRetryAfterMs({ 'Retry-After': '2' }, () => 0)).toBe(2000)
 
@@ -86,18 +92,28 @@ describe('m365GraphBatchClient', () => {
   })
 
   test('default sleep uses timers and resolves', async () => {
-    jest.useFakeTimers()
+    vi.useFakeTimers()
 
-    try {
-      const { axios } = createMockAxios([])
-      const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
+    const promise = new Promise((resolve) => {
+      setTimeout(resolve, 10)
+      vi.advanceTimersByTime(10)
+    })
 
-      const p = client._sleep(10)
-      jest.advanceTimersByTime(10)
-      await p
-    } finally {
-      jest.useRealTimers()
-    }
+    await promise
+    vi.useRealTimers()
+  })
+
+  test('createDefaultSleep resolves after ms', async () => {
+    vi.useFakeTimers()
+
+    const { createDefaultSleep } = await import('../internal/utils')
+    const sleep = createDefaultSleep()
+
+    const promise = sleep(25)
+    vi.advanceTimersByTime(25)
+    await promise
+
+    vi.useRealTimers()
   })
 
   test('default now() uses Date.now()', () => {
@@ -119,6 +135,31 @@ describe('m365GraphBatchClient', () => {
     const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
 
     expect(client._toFullUrl('users')).toBe('https://graph.microsoft.com/v1.0/users')
+  })
+
+  test('_toFullUrl prefixes to graphBaseUrl for /path', () => {
+    const { axios } = createMockAxios([])
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
+
+    expect(client._toFullUrl('/users')).toBe('https://graph.microsoft.com/v1.0/users')
+  })
+
+  test('_toFullUrl keeps absolute URL when origin matches graphBaseUrl', () => {
+    const { axios } = createMockAxios([])
+    const client = new M365GraphBatchClient({
+      axios,
+      getAccessToken: async () => 't',
+      graphBaseUrl: 'https://graph.microsoft.com/v1.0',
+    })
+
+    expect(client._toFullUrl('https://graph.microsoft.com/v1.0/users')).toBe('https://graph.microsoft.com/v1.0/users')
+  })
+
+  test('_toFullUrl does not throw if graphBaseUrl is invalid and url is absolute', () => {
+    const { axios } = createMockAxios([])
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', graphBaseUrl: 'not-a-url' })
+
+    expect(client._toFullUrl('https://evil.example/steal')).toBe('https://evil.example/steal')
   })
 
   test('constructor throws when getAccessToken/auth is missing', () => {
@@ -172,6 +213,31 @@ describe('m365GraphBatchClient', () => {
     expect(client).toBeInstanceOf(M365GraphBatchClient)
   })
 
+  test('constructor throws when axios dependency is missing and not injected', async () => {
+    const axiosPath = require.resolve('axios')
+
+    const saved = require.cache[axiosPath]
+    delete require.cache[axiosPath]
+
+    const originalLoad = require('module')._load
+    require('module')._load = (request, parent, isMain) => {
+      if (request === 'axios') {
+        const err = new Error('not found')
+        err.code = 'MODULE_NOT_FOUND'
+        throw err
+      }
+      return originalLoad(request, parent, isMain)
+    }
+
+    try {
+      const { M365GraphBatchClient: C } = require('../client.js')
+      expect(() => new C({ getAccessToken: async () => 't' })).toThrow(/axios dependency not found/i)
+    } finally {
+      require('module')._load = originalLoad
+      require.cache[axiosPath] = saved
+    }
+  })
+
   test('refresh_token provider caches token until expiry', async () => {
     const sleep = createMockSleep()
 
@@ -212,6 +278,33 @@ describe('m365GraphBatchClient', () => {
 
     // One token refresh + two batch calls.
     expect(calls).toHaveLength(3)
+  })
+
+  test('refresh_token provider returns cached token when not expired', async () => {
+    const axios = {
+      request: vi.fn(),
+    }
+
+    const now = vi.fn(() => 0)
+
+    const getAccessToken = createRefreshTokenAccessTokenProvider({
+      axios,
+      tenantId: 'tenant',
+      clientId: 'client',
+      clientSecret: 'secret',
+      refreshToken: 'refresh',
+      now,
+      clockSkewMs: 0,
+    })
+
+    axios.request.mockResolvedValueOnce(createAxiosResponse({ data: { access_token: 't1', expires_in: 3600 } }))
+
+    expect(await getAccessToken()).toBe('t1')
+    expect(axios.request).toHaveBeenCalledTimes(1)
+
+    now.mockReturnValue(1000)
+    expect(await getAccessToken()).toBe('t1')
+    expect(axios.request).toHaveBeenCalledTimes(1)
   })
 
   test('refresh_token provider refreshes again after expiry', async () => {
@@ -482,6 +575,42 @@ describe('m365GraphBatchClient', () => {
     await expect(getToken()).rejects.toThrow(/OAuth token refresh failed \(400\): nope/)
   })
 
+  test('createRefreshTokenAccessTokenProvider uses JSON stringified body in error', async () => {
+    const axios = {
+      request: async () => ({ status: 400, data: { error: 'invalid_grant' } }),
+    }
+
+    const getToken = createRefreshTokenAccessTokenProvider({
+      axios,
+      tenantId: 'tenant',
+      clientId: 'client',
+      clientSecret: 'secret',
+      refreshToken: 'refresh',
+    })
+
+    await expect(getToken()).rejects.toThrow(/OAuth token refresh failed \(400\): \{"error":"invalid_grant"\}/)
+  })
+
+  test('createRefreshTokenAccessTokenProvider uses deterministic now()', async () => {
+    const axios = {
+      request: async () => createAxiosResponse({ data: { access_token: 't', expires_in: 1 } }),
+    }
+
+    const now = () => 123
+
+    const getToken = createRefreshTokenAccessTokenProvider({
+      axios,
+      tenantId: 'tenant',
+      clientId: 'client',
+      clientSecret: 'secret',
+      refreshToken: 'refresh',
+      now,
+      clockSkewMs: 0,
+    })
+
+    await expect(getToken()).resolves.toBe('t')
+  })
+
   test('createRefreshTokenAccessTokenProvider shares a single in-flight refresh', async () => {
     const { axios, calls } = createMockAxios([
       {
@@ -503,18 +632,49 @@ describe('m365GraphBatchClient', () => {
     expect(calls).toHaveLength(1)
   })
 
-  test('constructor throws when axios dependency is missing', () => {
-    jest.isolateModules(() => {
-      jest.doMock('axios', () => {
-        throw new Error('not found')
-      })
+  test('createRefreshTokenAccessTokenProvider returns cached token when not expired', async () => {
+    const { axios, calls } = createMockAxios([
+      {
+        response: createAxiosResponse({ data: { access_token: 't', expires_in: 3600 } }),
+      },
+    ])
 
-      const { M365GraphBatchClient: IsolatedClient } = require('..')
-
-      expect(() => new IsolatedClient({ getAccessToken: async () => 't' })).toThrow(/axios dependency not found/)
-
-      jest.dontMock('axios')
+    const getToken = createRefreshTokenAccessTokenProvider({
+      axios,
+      tenantId: 'tenant',
+      clientId: 'client',
+      clientSecret: 'secret',
+      refreshToken: 'refresh',
+      now: () => 0,
+      clockSkewMs: 0,
     })
+
+    expect(await getToken()).toBe('t')
+    expect(await getToken()).toBe('t')
+    expect(calls).toHaveLength(1)
+  })
+
+  test('constructor throws when axios dependency is missing', async () => {
+    const Module = await import('module')
+
+    const originalLoad = Module.default._load
+    try {
+      Module.default._load = function (request, parent, isMain) {
+        if (request === 'axios') {
+          const err = new Error('Cannot find module axios')
+          err.code = 'MODULE_NOT_FOUND'
+          throw err
+        }
+        return originalLoad.call(this, request, parent, isMain)
+      }
+
+      // dynamic import so it uses patched loader
+      const { M365GraphBatchClient } = await import('..')
+
+      expect(() => new M365GraphBatchClient({ getAccessToken: async () => 't' })).toThrow(/axios dependency not found/)
+    } finally {
+      Module.default._load = originalLoad
+    }
   })
 
   test('falls back to relative nextLink when graphBaseUrl is invalid', async () => {
@@ -564,6 +724,21 @@ describe('m365GraphBatchClient', () => {
     const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
 
     await expect(client.batch([])).resolves.toEqual({ responses: {}, responseList: [] })
+
+    // Cover request meta aggregation in _executeChunkWithRetries
+    const { axios: axios2 } = createMockAxios([
+      {
+        response: createAxiosResponse({
+          data: { responses: [{ id: '1', status: 200, headers: {}, body: { ok: true } }] },
+        }),
+      },
+    ])
+
+    const client2 = new M365GraphBatchClient({ axios: axios2, getAccessToken: async () => 't', maxBatchRetries: 0 })
+
+    await expect(
+      client2._executeChunkWithRetries([{ id: 1, url: '/x' }], { paginate: false, mode: 'partial' })
+    ).resolves.toBeTruthy()
   })
 
   test('batch throws when requests is not an array', async () => {
@@ -572,6 +747,328 @@ describe('m365GraphBatchClient', () => {
 
     // eslint-disable-next-line no-undefined
     await expect(client.batch(undefined)).rejects.toThrow(/requests must be an array/)
+  })
+
+  test('_requestWithGlobalRetry retries on thrown errors then succeeds', async () => {
+    const sleep = createMockSleep()
+
+    const thrown = new Error('ECONNRESET')
+
+    const { axios, calls } = createMockAxios([
+      { throw: thrown },
+      { throw: thrown },
+      { response: createAxiosResponse({ data: { ok: true } }) },
+    ])
+
+    const client = new M365GraphBatchClient({
+      axios,
+      getAccessToken: async () => 't',
+      sleep: sleep.sleep,
+      initialBackoffMs: 5,
+      jitterRatio: 0,
+      maxBatchRetries: 5,
+    })
+
+    await expect(client._requestWithGlobalRetry({ method: 'GET', url: '/x' })).resolves.toEqual({ ok: true })
+    expect(calls).toHaveLength(3)
+    expect(sleep.calls).toEqual([5, 10])
+
+    // Cover non-retryable status helper
+    expect(client._isRetryableStatus(400)).toBe(false)
+  })
+
+  test('_requestWithGlobalRetry throws RequestFailedError for non-retryable status', async () => {
+    const { axios } = createMockAxios([{ response: createAxiosResponse({ status: 400, data: { error: 'nope' } }) }])
+
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 })
+
+    await expect(client._requestWithGlobalRetry({ method: 'GET', url: '/x' })).rejects.toThrow(/Request failed \(400\)/)
+  })
+
+  test('_requestWithGlobalRetry blocks absolute URLs outside graph origin (SSRF protection)', async () => {
+    const { axios, calls } = createMockAxios([{ response: createAxiosResponse({ status: 200, data: { ok: true } }) }])
+
+    const client = new M365GraphBatchClient({
+      axios,
+      getAccessToken: async () => 't',
+      graphBaseUrl: 'https://graph.microsoft.com/v1.0',
+      maxBatchRetries: 0,
+    })
+
+    await expect(client._requestWithGlobalRetry({ method: 'GET', url: 'https://evil.example/steal' })).rejects.toThrow(
+      /origin mismatch/i
+    )
+
+    expect(calls).toHaveLength(0)
+  })
+
+  test('batch: partial mode marks external absolute subrequest as partial and does not call axios', async () => {
+    const axios = {
+      request: vi.fn(async () => {
+        throw new Error('axios should not be called')
+      }),
+    }
+
+    const client = new M365GraphBatchClient({
+      axios,
+      getAccessToken: async () => 't',
+      graphBaseUrl: 'https://graph.microsoft.com/v1.0',
+      maxBatchRetries: 0,
+    })
+
+    // cover _postBatchWithGlobalRetry origin validation (it should not run in this scenario)
+    const postSpy = vi.spyOn(client, '_postBatchWithGlobalRetry')
+
+    const out = await client.batch([{ id: '1', method: 'GET', url: 'https://evil.example/steal' }], {
+      mode: 'partial',
+    })
+
+    expect(out.partial).toBe(true)
+    expect(out.errors.some((e) => e.stage === 'batch' || e.stage === 'subrequest')).toBe(true)
+    expect(out.responses['1']).toBeTruthy()
+    expect(out.responses['1'].status).toBe(599)
+    expect(axios.request).toHaveBeenCalledTimes(0)
+    expect(postSpy).toHaveBeenCalledTimes(0)
+  })
+
+  test('_postBatchWithGlobalRetry annotates ORIGIN_MISMATCH with stage=subrequest', async () => {
+    const axios = {
+      request: vi.fn(async () => {
+        throw new Error('axios should not be called')
+      }),
+    }
+
+    const client = new M365GraphBatchClient({
+      axios,
+      getAccessToken: async () => 't',
+      graphBaseUrl: 'https://graph.microsoft.com/v1.0',
+      maxBatchRetries: 0,
+    })
+
+    await expect(
+      client._postBatchWithGlobalRetry([{ id: '1', url: 'https://evil.example/steal' }])
+    ).rejects.toMatchObject({
+      code: 'ORIGIN_MISMATCH',
+      stage: 'subrequest',
+    })
+
+    expect(axios.request).toHaveBeenCalledTimes(0)
+  })
+
+  test('batch: strict mode throws for external absolute subrequest', async () => {
+    const axios = {
+      request: vi.fn(async () => {
+        throw new Error('axios should not be called')
+      }),
+    }
+
+    const client = new M365GraphBatchClient({
+      axios,
+      getAccessToken: async () => 't',
+      graphBaseUrl: 'https://graph.microsoft.com/v1.0',
+      maxBatchRetries: 0,
+    })
+
+    await expect(
+      client.batch([{ id: '1', method: 'GET', url: 'https://evil.example/steal' }], { mode: 'strict' })
+    ).rejects.toThrow(/origin mismatch/i)
+
+    expect(axios.request).toHaveBeenCalledTimes(0)
+  })
+
+  test('batch: partial mode filters off-origin subrequests and still runs $batch for valid ones', async () => {
+    const axios = {
+      request: vi.fn(async (_config) =>
+        createAxiosResponse({
+          data: {
+            responses: [{ id: '2', status: 200, headers: {}, body: { ok: true } }],
+          },
+        })
+      ),
+    }
+
+    const client = new M365GraphBatchClient({
+      axios,
+      getAccessToken: async () => 't',
+      graphBaseUrl: 'https://graph.microsoft.com/v1.0',
+      maxBatchRetries: 0,
+    })
+
+    const out = await client.batch(
+      [
+        { id: '1', method: 'GET', url: 'https://evil.example/steal' },
+        { id: '2', method: 'GET', url: '/users?$top=1' },
+      ],
+      { mode: 'partial' }
+    )
+
+    expect(out.partial).toBe(true)
+    expect(out.responses['1']?.status).toBe(599)
+    expect(out.responses['2']?.status).toBe(200)
+
+    // Should call axios once for the valid request.
+    expect(axios.request).toHaveBeenCalledTimes(1)
+    expect(axios.request.mock.calls[0][0].url).toBe('https://graph.microsoft.com/v1.0/$batch')
+
+    // Ensure we only sent the valid subrequest in payload.
+    expect(axios.request.mock.calls[0][0].data.requests).toHaveLength(1)
+    expect(axios.request.mock.calls[0][0].data.requests[0].id).toBe('2')
+  })
+
+  test('_requestWithGlobalRetry retries on retryable status + Retry-After then succeeds', async () => {
+    const sleep = createMockSleep()
+
+    const { axios, calls } = createMockAxios([
+      { response: createAxiosResponse({ status: 429, headers: { 'Retry-After': '2' }, data: 'slow down' }) },
+      { response: createAxiosResponse({ status: 200, data: { ok: true } }) },
+    ])
+
+    const client = new M365GraphBatchClient({
+      axios,
+      getAccessToken: async () => 't',
+      sleep: sleep.sleep,
+      initialBackoffMs: 1,
+      jitterRatio: 0,
+      maxBatchRetries: 5,
+    })
+
+    await expect(client._requestWithGlobalRetry({ method: 'GET', url: '/x' })).resolves.toEqual({ ok: true })
+    expect(calls).toHaveLength(2)
+    expect(sleep.calls).toEqual([2000])
+  })
+
+  test('_requestWithGlobalRetry throws RequestExceededRetriesError after max retries', async () => {
+    const { axios } = createMockAxios([
+      { response: createAxiosResponse({ status: 429, headers: { 'Retry-After': '0' }, data: 'slow down' }) },
+      { response: createAxiosResponse({ status: 429, headers: { 'Retry-After': '0' }, data: 'slow down' }) },
+    ])
+
+    const client = new M365GraphBatchClient({
+      axios,
+      getAccessToken: async () => 't',
+      initialBackoffMs: 0,
+      jitterRatio: 0,
+      maxBatchRetries: 1,
+    })
+
+    await expect(client._requestWithGlobalRetry({ method: 'GET', url: '/x' })).rejects.toThrow(
+      /Request exceeded retries \(last status 429\)/
+    )
+  })
+
+  test('_postBatchWithGlobalRetry builds payload, normalizes headers, and validates shape', async () => {
+    const { axios, calls } = createMockAxios([
+      {
+        matcher: (config) =>
+          config.method === 'POST' &&
+          config.url === 'https://graph.microsoft.com/v1.0/$batch' &&
+          config.data?.requests?.[0]?.url === '/users' &&
+          config.data?.requests?.[0]?.method === 'GET',
+        response: createAxiosResponse({
+          status: 200,
+          data: {
+            responses: [
+              {
+                id: '1',
+                status: 200,
+                headers: { 'Retry-After': 1 },
+                body: { ok: true },
+              },
+            ],
+          },
+        }),
+      },
+    ])
+
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 })
+
+    const out = await client._postBatchWithGlobalRetry([{ id: '1', method: 'GET', url: '/users' }])
+    expect(calls).toHaveLength(1)
+    expect(out.responses[0].headers).toEqual({ 'retry-after': '1' })
+
+    // Invalid shape
+    const badAxios = { request: async () => createAxiosResponse({ data: { nope: true } }) }
+    const badClient = new M365GraphBatchClient({ axios: badAxios, getAccessToken: async () => 't' })
+
+    await expect(badClient._postBatchWithGlobalRetry([{ id: '1', url: '/x' }])).rejects.toThrow(
+      /Invalid \$batch response shape/
+    )
+  })
+
+  test('executeChunkWithRetries retries only retryable subresponses, uses Retry-After, and paginates', async () => {
+    const sleep = createMockSleep()
+
+    const { axios, calls } = createMockAxios([
+      // initial $batch
+      {
+        response: createAxiosResponse({
+          data: {
+            responses: [
+              {
+                id: '1',
+                status: 429,
+                headers: { 'Retry-After': '1' },
+                body: { error: 'rate limit' },
+              },
+              {
+                id: '2',
+                status: 200,
+                headers: {},
+                body: { value: [{ id: 1 }], '@odata.nextLink': '/next' },
+              },
+            ],
+          },
+        }),
+      },
+      // retry $batch only for id=1
+      {
+        matcher: (config) => config.data.requests.length === 1 && config.data.requests[0].id === '1',
+        response: createAxiosResponse({
+          data: {
+            responses: [
+              {
+                id: '1',
+                status: 200,
+                headers: {},
+                body: { ok: true },
+              },
+            ],
+          },
+        }),
+      },
+      // pagination GET for id=2
+      {
+        matcher: (config) => config.method === 'GET' && config.url === 'https://graph.microsoft.com/v1.0/next',
+        response: createAxiosResponse({ data: { value: [{ id: 2 }], '@odata.nextLink': '/next2' } }),
+      },
+      {
+        matcher: (config) => config.method === 'GET' && config.url === 'https://graph.microsoft.com/v1.0/next2',
+        response: createAxiosResponse({ data: { value: [] } }),
+      },
+    ])
+
+    const client = new M365GraphBatchClient({
+      axios,
+      getAccessToken: async () => 't',
+      sleep: sleep.sleep,
+      initialBackoffMs: 0,
+      jitterRatio: 0,
+      maxBatchRetries: 0,
+      maxSubrequestRetries: 2,
+    })
+
+    const out = await client._executeChunkWithRetries(
+      [
+        { id: '1', method: 'GET', url: '/a' },
+        { id: '2', method: 'GET', url: '/b' },
+      ],
+      { paginate: true, mode: 'partial' }
+    )
+
+    expect(calls).toHaveLength(3)
+    expect(sleep.calls).toEqual([1000])
+    expect(out.partial).toBe(true)
+    expect(out.responseList[1].body.value).toEqual([{ id: 1 }])
   })
 
   test('batch sends a single $batch request and returns ordered responses', async () => {
@@ -607,22 +1104,63 @@ describe('m365GraphBatchClient', () => {
   test('strict mode returns legacy shape (no partial/errors)', async () => {
     const { axios } = createMockAxios([
       {
-        response: createAxiosResponse({
-          data: { responses: [{ id: '1', status: 200, headers: {}, body: { ok: true } }] },
-        }),
+        response: createAxiosResponse({ data: { responses: [{ id: '1', status: 200, headers: {}, body: {} }] } }),
       },
     ])
 
+    const client = new M365GraphBatchClient({
+      axios,
+      getAccessToken: async () => 't',
+      maxBatchRetries: 0,
+      initialBackoffMs: 0,
+      jitterRatio: 0,
+    })
+
+    const out = await client.batch([{ id: '1', url: '/x' }], { mode: 'strict', paginate: false })
+
+    expect(out.partial).toBeUndefined()
+    expect(out.errors).toBeUndefined()
+    expect(out.responses['1'].status).toBe(200)
+  })
+
+  test('default retryableStatuses includes 429, excludes 418', async () => {
+    const { axios } = createMockAxios([])
     const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't' })
 
-    const out = await client.batch([{ id: '1', url: '/x' }], { mode: 'strict' })
+    expect(client._isRetryableStatus(429)).toBe(true)
+    expect(client._isRetryableStatus(418)).toBe(false)
+  })
 
-    expect(out).toEqual({
-      responses: {
-        1: { id: '1', status: 200, headers: {}, body: { ok: true } },
-      },
-      responseList: [{ id: '1', status: 200, headers: {}, body: { ok: true } }],
+  test('custom retryableStatuses are respected', async () => {
+    const { axios } = createMockAxios([])
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', retryableStatuses: [418] })
+
+    expect(client._isRetryableStatus(418)).toBe(true)
+    expect(client._isRetryableStatus(429)).toBe(false)
+  })
+
+  test('_computeBackoffMs uses backoff helper', () => {
+    const { axios } = createMockAxios([])
+    const client = new M365GraphBatchClient({
+      axios,
+      getAccessToken: async () => 't',
+      initialBackoffMs: 100,
+      maxBackoffMs: 100,
+      jitterRatio: 0,
     })
+
+    expect(client._computeBackoffMs(1)).toBe(100)
+  })
+
+  test('_getWithGlobalRetry delegates to _requestWithGlobalRetry', async () => {
+    const { axios } = createMockAxios([
+      {
+        response: createAxiosResponse({ status: 200, data: { ok: true } }),
+      },
+    ])
+
+    const client = new M365GraphBatchClient({ axios, getAccessToken: async () => 't', maxBatchRetries: 0 })
+    await expect(client._getWithGlobalRetry('/me')).resolves.toEqual({ ok: true })
   })
 
   test('strict chunk execution returns legacy shape', async () => {

@@ -1,19 +1,39 @@
-const { PaginationExceededMaxPagesError, PaginationNonJsonError } = require('../errors')
+const {
+  PaginationExceededMaxPagesError,
+  PaginationExternalNextLinkError,
+  PaginationNonJsonError,
+} = require('../errors')
 
 function createPaginationHandler({ getWithGlobalRetry, graphOrigin, maxPaginationPages }) {
-  const resolveNextLink = (link) => {
+  const resolveNextLink = (link, { id }) => {
+    let absolute
     try {
-      // Absolute
-      return new URL(link).toString()
+      absolute = new URL(link)
     } catch {
-      if (graphOrigin) {
-        return new URL(link, graphOrigin).toString()
-      }
-      return link
+      absolute = null
     }
+
+    if (absolute) {
+      // If user configured `graphOrigin`, enforce host allowlist to avoid SSRF.
+      if (graphOrigin && absolute.origin !== new URL(graphOrigin).origin) {
+        throw new PaginationExternalNextLinkError({
+          id,
+          nextLink: absolute.toString(),
+          allowedOrigin: new URL(graphOrigin).origin,
+        })
+      }
+
+      return absolute.toString()
+    }
+
+    if (graphOrigin) {
+      return new URL(link, graphOrigin).toString()
+    }
+
+    return link
   }
 
-  return {
+  const api = {
     async paginateResponsesInPlace(responseList, requestMetaById, options = {}) {
       const mode = options.mode ?? 'strict'
       const onError = typeof options.onError === 'function' ? options.onError : () => {}
@@ -31,10 +51,12 @@ function createPaginationHandler({ getWithGlobalRetry, graphOrigin, maxPaginatio
 
         const aggregated = resp.body.value.slice()
 
-        let url = resolveNextLink(nextLink)
+        let url = nextLink
         let pageCount = 0
 
         try {
+          url = resolveNextLink(nextLink, { id: resp.id })
+
           while (url) {
             pageCount += 1
             if (pageCount > maxPaginationPages) {
@@ -47,7 +69,7 @@ function createPaginationHandler({ getWithGlobalRetry, graphOrigin, maxPaginatio
             }
 
             if (Array.isArray(page.value)) aggregated.push(...page.value)
-            url = page['@odata.nextLink'] ? resolveNextLink(page['@odata.nextLink']) : null
+            url = page['@odata.nextLink'] ? resolveNextLink(page['@odata.nextLink'], { id: resp.id }) : null
           }
 
           resp.body.value = aggregated
@@ -63,6 +85,8 @@ function createPaginationHandler({ getWithGlobalRetry, graphOrigin, maxPaginatio
       }
     },
   }
+
+  return api
 }
 
 module.exports = {

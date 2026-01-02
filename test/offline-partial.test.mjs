@@ -1,4 +1,6 @@
-const { M365GraphBatchClient } = require('..')
+import { describe, expect, test } from 'vitest'
+
+import { M365GraphBatchClient } from '..'
 
 function createAxiosResponse({ status = 200, data, headers = {} }) {
   const normalizedHeaders = {}
